@@ -1,0 +1,17 @@
+site_name: Pipeteer
+repo_name: pipeteer
+repo_url: https://github.com/marciclabas/pipeteer
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+nav:
+  - Home: index.md
+  - Queues: queues.md
+  - Pipelines: pipelines.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
