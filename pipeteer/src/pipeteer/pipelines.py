@@ -1,9 +1,11 @@
-from typing_extensions import TypeVar, Generic, Callable, Awaitable, Protocol, get_type_hints, Any
+from typing_extensions import TypeVar, Generic, Callable, Awaitable, Protocol, get_type_hints, Any, Self
+import asyncio
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from multiprocessing import Process
-from haskellian import Tree, promise as P
+from haskellian import Tree, trees, promise as P
+from dslog import Logger
 from pipeteer import ReadQueue, WriteQueue, Backend, ListQueue
 
 A = TypeVar('A', default=Any)
@@ -13,6 +15,15 @@ C = TypeVar('C', default=Any)
 @dataclass
 class Context:
   backend: Backend
+  log: Logger = field(default_factory=Logger.click)
+
+  def prefix(self, path: tuple[str, ...]) -> Self:
+    key = '/'.join(path) or 'root'
+    return replace(self, log=self.log.prefix(f'[{key}]'))
+
+  @classmethod
+  def sqlite(cls, path: str):
+    return cls(Backend.sqlite(path))
 
 Ctx = TypeVar('Ctx', bound=Context, default=Any)
 
@@ -30,24 +41,44 @@ class Pipeline(ABC, Generic[A, B, Ctx]):
   def run(self, Qout: WriteQueue[B], ctx: Ctx, /, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     ...
 
+  def run_all(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()):
+    procs = self.run(Qout, ctx, prefix=prefix)
+    procs = trees.map(procs, lambda proc: proc())
+    
+    for path, proc in trees.flatten(procs):
+      key = '/'.join((k for k in path if k != '_root'))
+      ctx.log(f'[{key}] Starting...')
+      proc.start()
+    
+    for path, proc in trees.flatten(procs):
+      key = '/'.join((k for k in path if k != '_root'))
+      proc.join()
+      ctx.log(f'[{key}] Stopping...')
+
 @dataclass
 class Task(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
   call: Callable[[A, Ctx], Awaitable[B]]
   reserve: timedelta | None = None
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
-    Qin = ctx.backend.queue(prefix, self.type)
+    Qin = self.input(ctx, prefix=prefix)
+    ctx = ctx.prefix(prefix)
 
     @P.run
     async def runner(Qin: ReadQueue[A], Qout: WriteQueue[B]):
       while True:
-        k, x = await Qin.read_any(reserve=self.reserve)
-        y = await self.call(x, ctx)
-        await Qout.push(k, y)
-        await Qin.pop(k)
+        try:
+          k, x = await Qin.wait_any(reserve=self.reserve)
+          y = await self.call(x, ctx)
+          await Qout.push(k, y)
+          await Qin.pop(k)
+
+        except Exception as e:
+          ctx.log(f'Error: {e}', level='ERROR')
 
     return lambda: Process(target=runner, args=(Qin, Qout))
   
+
 def param_type(fn, idx=0):
   return list(get_type_hints(fn).values())[idx]
 
@@ -86,6 +117,7 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
     if self.step < len(self.states):
       return self.states[self.step]
     else:
+      self.ctx.log(f'Running step {self.step}: {pipe.name}({self.states[self.step-1]}) [{self.key}]', level='DEBUG')
       Qin = pipe.input(self.ctx, prefix=self.prefix + (pipe.name,))
       await Qin.push(self.key, x)
       raise Stop()
@@ -101,23 +133,30 @@ class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
     return await self.call(states[0], wkf_ctx)
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
-    Qin = ctx.backend.queue(prefix, self.type)
+    
+    Qin = self.input(ctx, prefix=prefix)
     Qstates = ctx.backend.list_queue(prefix + ('_states',), self.type)
 
     @P.run
     async def runner(Qin: ReadQueue[A], Qout: WriteQueue[B], Qstates: ListQueue, ctx: Ctx, prefix: tuple[str, ...]):
+      ctx = ctx.prefix(prefix)
       while True:
-        key, val = await Qin.read_any()
-        await Qstates.append(key, val)
         try:
-          out = await self.rerun(key, ctx, prefix=prefix)
-          await Qout.push(key, out)
-          await Qstates.pop(key)
-        except Stop:
-          ...
-        await Qin.pop(key)
+          key, val = await Qin.wait_any()
+          await Qstates.append(key, val)
+          try:
+            out = await self.rerun(key, ctx, prefix=prefix)
+            ctx.log(f'Outputting {out} [{key}]', level='DEBUG')
+            await Qout.push(key, out)
+            await Qstates.pop(key)
+          except Stop:
+            ...
+          await Qin.pop(key)
+        
+        except Exception as e:
+          ctx.log(f'Error: {e}', level='ERROR')
 
-    procs = dict(wkf=lambda: Process(target=runner, args=(Qin, Qout, Qstates, ctx, prefix)))
+    procs = dict(_root=lambda: Process(target=runner, args=(Qin, Qout, Qstates, ctx, prefix)))
     for pipe in self.pipelines:
       procs[pipe.name] = pipe.run(Qin, ctx, prefix=prefix + (pipe.name,)) # type: ignore
 

@@ -1,4 +1,4 @@
-from typing import TypeVar, Sequence, Self
+from typing import TypeVar, Sequence
 from abc import ABC, abstractmethod
 from pipeteer.queues import Queue, ListQueue
 
@@ -6,6 +6,7 @@ A = TypeVar('A')
 B = TypeVar('B')
 
 class Backend(ABC):
+
   @abstractmethod
   def queue(self, path: Sequence[str], type: type[A]) -> Queue[A]:
     ...
@@ -18,7 +19,12 @@ class Backend(ABC):
   def output(self, type: type[A]) -> Queue[A]:
     ...
 
-  @staticmethod
-  def sqlite(path: str):
-    from .sql import SqlBackend
-    return SqlBackend.at(path)
+  @classmethod
+  def sqlite(cls, path: str):
+    from .default import DefaultBackend
+    return DefaultBackend.sqlite(path)
+  
+  @classmethod
+  def sql(cls, url: str):
+    from .default import DefaultBackend
+    return DefaultBackend.sql(url)

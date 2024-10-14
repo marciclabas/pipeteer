@@ -1,4 +1,4 @@
 from .backend import Backend
-from .sql import SqlBackend
+from .default import DefaultBackend
 
-__all__ = ['Backend', 'SqlBackend']
+__all__ = ['Backend', 'DefaultBackend']

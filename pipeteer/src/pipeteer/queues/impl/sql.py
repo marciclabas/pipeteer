@@ -5,9 +5,9 @@ from datetime import timedelta, datetime
 from pydantic import RootModel, TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.exc import DatabaseError
-from sqlalchemy.types import JSON, BLOB, String
+from sqlalchemy.types import JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlmodel import select, text
+from sqlmodel import select, text, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 from pipeteer.queues import Queue, ListQueue, QueueError, InfraError, InexistentItem
 
@@ -29,11 +29,14 @@ def wrap_exceptions(fn: Callable[Ps, Coroutine[Any, Any, T]]) -> Callable[Ps, Co
   
   return wrapped
 
+# exec_options = {}
+exec_options = {'isolation_level': 'SERIALIZABLE', 'no_cache': True}
+
 class SqlQueue(Queue[T], Generic[T]):
 
   @classmethod
-  def new(cls, type: type[T], url: str, *, table: str) -> 'SqlQueue[T]':
-    engine = create_async_engine(url)
+  def new(cls, type: type[T], url: str, *, table: str, echo: bool = False) -> 'SqlQueue[T]':
+    engine = create_async_engine(url, echo=echo)
     return cls(type, engine, table=table)
 
   def __init__(self, type: type[T], engine: AsyncEngine, *, table: str):
@@ -48,7 +51,7 @@ class SqlQueue(Queue[T], Generic[T]):
       __tablename__ = table
       key: Mapped[str] = mapped_column(primary_key=True)
       value: Mapped[RootModel[type]] = mapped_column(type_=JSON) # type: ignore
-      ttl: Mapped[datetime | None] = mapped_column()
+      ttl: Mapped[datetime|None] = mapped_column(default=None)
 
     self.Table = Table
     self.metadata = Base.metadata
@@ -94,7 +97,7 @@ class SqlQueue(Queue[T], Generic[T]):
     row = (await s.exec(stmt)).first()
     if row is not None:
       await s.delete(row)
-    s.add(self.Table(key=key, value=value))
+    s.add(self.Table(key=key, value=value, ttl=datetime.now()))
 
   async def push(self, key: str, value: T):
     return await self.with_autocommit(self._push, key, value)
@@ -111,10 +114,15 @@ class SqlQueue(Queue[T], Generic[T]):
     return await self.with_autocommit(self._pop, key)
 
   async def _read(self, s: AsyncSession, key: str, /, *, reserve: timedelta | None = None) -> T:
-    stmt = select(self.Table).where(self.Table.key == key)
-    row = (await s.exec(stmt)).first()
+    stmt = select(self.Table).where(
+      self.Table.key == key, 
+      or_(self.Table.ttl < datetime.now(), self.Table.ttl == None)
+    )
+    if reserve is not None:
+      stmt = stmt.with_for_update(nowait=True, skip_locked=True)
 
-    if row and (row.ttl is None or row.ttl < datetime.now()):
+    row = (await s.exec(stmt, execution_options=exec_options if reserve else {})).first()
+    if row:
       if reserve is not None:
         row.ttl = datetime.now() + reserve
         s.add(row)
@@ -125,19 +133,46 @@ class SqlQueue(Queue[T], Generic[T]):
     
   async def read(self, key: str, /, *, reserve: timedelta | None = None) -> T:
     return await self.with_session(self._read, key, reserve=reserve)
+  
+  async def _read_any(self, s: AsyncSession, *, reserve: timedelta | None = None) -> tuple[str, T] | None:
+    stmt = select(self.Table).where(
+      or_(self.Table.ttl < datetime.now(), self.Table.ttl == None)
+    ).limit(1)
+    if reserve is not None:
+      stmt = stmt.with_for_update(skip_locked=True)
+    
+    row = (await s.exec(stmt, execution_options=exec_options if reserve else {})).first()
+    if row:
+      k, v = row.key, row.value
+      if reserve is not None:
+        row.ttl = datetime.now() + reserve
+        s.add(row)
+        await s.commit()
+      
+      return k, v # type: ignore
+    
+  async def read_any(self, *, reserve: timedelta | None = None) -> tuple[str, T] | None:
+    return await self.with_session(self._read_any, reserve=reserve)
     
   async def items(self, *, reserve: timedelta | None, max: int | None) -> AsyncIterable[tuple[str, T]]: 
     await self.initialize()
     async with AsyncSession(self.engine) as s:
-      result = await s.exec(select(self.Table).limit(max))
-      for row in result:
-        if row.ttl is None or row.ttl < datetime.now():
-          if reserve is not None:
-            row.ttl = datetime.now() + reserve
-            s.add(row)
-          yield row.key, row.value # type: ignore
+      stmt = select(self.Table).where(
+        or_(self.Table.ttl < datetime.now(), self.Table.ttl == None)
+      ).limit(max)
+      if reserve is not None:
+        stmt = stmt.with_for_update(skip_locked=True)
 
-      if reserve:
+      result = await s.exec(stmt, execution_options=exec_options if reserve else {})
+      for row in result:
+        k, v = row.key, row.value
+        if reserve is not None:
+          row.ttl = datetime.now() + reserve
+          s.add(row)
+          
+        yield k, v # type: ignore
+      
+      if reserve is not None:
         await s.commit()
   
   @wrap_exceptions

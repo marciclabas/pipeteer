@@ -1,19 +1,19 @@
-from multiprocessing import Process
-from haskellian import trees, promise as P
+import asyncio
+from threading import Thread
 from pipeteer import task, workflow, Context, WorkflowContext, Backend
 
 class MyContext(Context):
-  def log(self, *objs, level: str = 'INFO'):
-    print(f'[{level}]', *objs)
+  def log(self, msg: str):
+    print(msg)
 
 @task()
 async def double(x: int, ctx: MyContext) -> int:
-  ctx.log(f'Doubling {x}...')
+  ctx.log(f'Doubling {x}')
   return 2*x
 
 @task()
 async def inc(x: int, ctx: MyContext) -> int:
-  ctx.log(f'Incrementing {x}...')
+  ctx.log(f'Incrementing {x}')
   return x + 1
 
 @workflow([double, inc])
@@ -34,20 +34,12 @@ if __name__ == '__main__':
   backend = Backend.sqlite('wkf.db')
   ctx = MyContext(backend)
   Qin = series.input(ctx)
-  Qout = backend.output(int)
-  procs = series.run(Qout, ctx)
+  Qout = ctx.backend.output(int)
 
-  @P.run
-  async def run():
-    await Qin.push('hello', [1, 2, 3])
+  async def tasks():
+    for i in range(10000):
+      await Qin.push(f'task-{i}', [1, 2, 3])
+      await asyncio.sleep(5)
 
-  procs['client'] = lambda: Process(target=run) # type: ignore
-  procs = trees.map(procs, lambda proc: proc())
-
-  for path, proc in trees.flatten(procs):
-    name = path and '/'.join(path) or 'root'
-    print(f'Starting {name}...')
-    proc.start()
-
-  for _, proc in trees.flatten(procs):
-    proc.join()
+  thread = Thread(target=asyncio.run, args=(tasks(),)).start()
+  series.run_all(Qout, ctx)

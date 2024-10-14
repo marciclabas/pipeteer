@@ -14,15 +14,22 @@ class ReadQueue(ABC, Generic[A]):
     """Delete a specific item from the queue
     Throws `ReadError`"""
 
-  async def read_any(self, *, reserve: timedelta | None = None) -> tuple[str, A]:
-    """Read any item from the queue
+  async def wait_any(self, *, reserve: timedelta | None = None, poll_interval: timedelta = timedelta(seconds=1)) -> tuple[str, A]:
+    """Read any item from the queue, waiting if necessary
     - `reserve`: reservation timeout. If not acknowledged within this time, the item is visible again
     - Throws `InfraError`
     """
-    while True:
-      async for key, val in self.items(reserve=reserve, max=1):
-        return key, val
-      await asyncio.sleep(1)
+    while not (res := await self.read_any(reserve=reserve)):
+      await asyncio.sleep(poll_interval.total_seconds())
+    return res
+
+  async def read_any(self, *, reserve: timedelta | None = None) -> tuple[str, A] | None:
+    """Read any item from the queue if not empty
+    - `reserve`: reservation timeout. If not acknowledged within this time, the item is visible again
+    - Throws `InfraError`
+    """
+    async for key, val in self.items(reserve=reserve, max=1):
+      return key, val
 
   @abstractmethod
   async def read(self, key: str, /, *, reserve: timedelta | None = None) -> A:
