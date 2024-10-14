@@ -2,7 +2,7 @@ from typing_extensions import Literal, Any
 from dataclasses import dataclass
 
 @dataclass(eq=False)
-class QueueError(BaseException):
+class QueueError(Exception):
   """Base class for all queue errors"""
 
   detail: Any | None = None

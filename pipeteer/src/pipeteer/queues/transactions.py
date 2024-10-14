@@ -51,10 +51,10 @@ class Transaction:
     await self.agent.commit()
 
   async def close(self):
-    if self.autocommit:
-      await self.commit()
     await asyncio.gather(*[agent.close(self.agent) for agent in self.agents])
     await self.agent.close()
 
-  async def __aexit__(self, *_):
+  async def __aexit__(self, exc_type, exc_value, traceback):
+    if exc_type is None and self.autocommit:
+      await self.commit()
     await self.close()
