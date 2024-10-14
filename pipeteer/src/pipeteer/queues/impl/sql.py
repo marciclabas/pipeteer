@@ -6,6 +6,7 @@ from pydantic import RootModel, TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.types import JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlmodel import select, text, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -29,8 +30,8 @@ def wrap_exceptions(fn: Callable[Ps, Coroutine[Any, Any, T]]) -> Callable[Ps, Co
   
   return wrapped
 
-# exec_options = {}
-exec_options = {'isolation_level': 'SERIALIZABLE', 'no_cache': True}
+exec_options = {}
+# exec_options = {'isolation_level': 'SERIALIZABLE', 'no_cache': True}
 
 class SqlQueue(Queue[T], Generic[T]):
 
@@ -47,10 +48,11 @@ class SqlQueue(Queue[T], Generic[T]):
     class Base(DeclarativeBase):
       ...
 
+    json_type = JSONB if self.engine.dialect.name == 'postgresql' else JSON
     class Table(Base):
       __tablename__ = table
       key: Mapped[str] = mapped_column(primary_key=True)
-      value: Mapped[RootModel[type]] = mapped_column(type_=JSON) # type: ignore
+      value: Mapped[RootModel[type]] = mapped_column(type_=json_type) # type: ignore
       ttl: Mapped[datetime|None] = mapped_column(default=None)
 
     self.Table = Table
@@ -61,6 +63,9 @@ class SqlQueue(Queue[T], Generic[T]):
     if not self.initialized:
       async with self.engine.begin() as conn:
         await conn.run_sync(self.metadata.create_all)
+        if self.engine.dialect.name == 'sqlite':
+          await conn.execute(text("PRAGMA journal_mode=WAL"))
+          await conn.execute(text("PRAGMA busy_timeout=5000"))
       self.initialized = True
 
   def __repr__(self):
@@ -156,24 +161,28 @@ class SqlQueue(Queue[T], Generic[T]):
     
   async def items(self, *, reserve: timedelta | None, max: int | None) -> AsyncIterable[tuple[str, T]]: 
     await self.initialize()
-    async with AsyncSession(self.engine) as s:
-      stmt = select(self.Table).where(
-        or_(self.Table.ttl < datetime.now(), self.Table.ttl == None)
-      ).limit(max)
-      if reserve is not None:
-        stmt = stmt.with_for_update(skip_locked=True)
-
-      result = await s.exec(stmt, execution_options=exec_options if reserve else {})
-      for row in result:
-        k, v = row.key, row.value
+    try:
+      async with AsyncSession(self.engine) as s:
+        stmt = select(self.Table).where(
+          or_(self.Table.ttl < datetime.now(), self.Table.ttl == None)
+        ).limit(max)
         if reserve is not None:
-          row.ttl = datetime.now() + reserve
-          s.add(row)
+          stmt = stmt.with_for_update(skip_locked=True)
+
+        result = await s.exec(stmt, execution_options=exec_options if reserve else {})
+        for row in result:
+          k, v = row.key, row.value
+          if reserve is not None:
+            row.ttl = datetime.now() + reserve
+            s.add(row)
+            
+          yield k, v # type: ignore
+        
+        if reserve is not None:
+          await s.commit()
           
-        yield k, v # type: ignore
-      
-      if reserve is not None:
-        await s.commit()
+    except DatabaseError as e:
+      raise InfraError(e) from e
   
   @wrap_exceptions
   async def enter(self, other=None):
@@ -207,15 +216,24 @@ adapter = TypeAdapter(Any)
 
 class ListSqlQueue(ListQueue[T], SqlQueue[list[T]], Generic[T]):
   async def _append(self, s: AsyncSession, key: str, value: T):
-    single = adapter.dump_json([value])
-    obj = adapter.dump_json(value)
-    stmt = f'''
-      INSERT INTO "{self.table}" (key, value)
-        VALUES (:key, json(:single))
-        ON CONFLICT(key)
-        DO UPDATE SET 
-          value = json_insert(value, '$[#]', json(:obj))
-    '''
+    single = adapter.dump_json([value]).decode()
+    obj = adapter.dump_json(value).decode()
+    if s.bind.dialect.name == 'postgresql':
+      stmt = f'''
+        INSERT INTO "{self.table}" (key, value)
+          VALUES (:key, jsonb(:single))
+          ON CONFLICT (key)
+          DO UPDATE SET 
+            value = "{self.table}".value || jsonb(:obj)
+      '''
+    else:
+      stmt = f'''
+        INSERT INTO "{self.table}" (key, value)
+          VALUES (:key, json(:single))
+          ON CONFLICT(key)
+          DO UPDATE SET 
+            value = json_insert(value, '$[#]', json(:obj))
+      '''
     stmt = text(stmt).bindparams(key=key, single=single, obj=obj)
     await s.execute(stmt)
 
