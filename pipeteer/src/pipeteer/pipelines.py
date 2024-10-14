@@ -6,7 +6,7 @@ from datetime import timedelta
 from multiprocessing import Process
 from haskellian import Tree, trees, promise as P
 from dslog import Logger
-from pipeteer import ReadQueue, WriteQueue, Backend, ListQueue
+from pipeteer import ReadQueue, WriteQueue, Backend, ListQueue, Transaction
 
 A = TypeVar('A', default=Any)
 B = TypeVar('B', default=Any)
@@ -70,8 +70,9 @@ class Task(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
         try:
           k, x = await Qin.wait_any(reserve=self.reserve)
           y = await self.call(x, ctx)
-          await Qout.push(k, y)
-          await Qin.pop(k)
+          async with Transaction(Qin, Qout, autocommit=True):
+            await Qout.push(k, y)
+            await Qin.pop(k)
 
         except Exception as e:
           ctx.log(f'Error: {e}', level='ERROR')

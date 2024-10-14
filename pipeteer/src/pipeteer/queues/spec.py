@@ -2,11 +2,11 @@ from typing_extensions import TypeVar, Generic, AsyncIterable
 from abc import ABC, abstractmethod
 import asyncio
 from datetime import timedelta
-from pipeteer.queues import InexistentItem
+from pipeteer.queues import InexistentItem, Transactional
 
 A = TypeVar('A')
 
-class ReadQueue(ABC, Generic[A]):
+class ReadQueue(Transactional, Generic[A]):
   """A read/pop-only view of a `Queue`"""
 
   @abstractmethod
@@ -72,7 +72,7 @@ class ReadQueue(ABC, Generic[A]):
     async for _, val in self.items(reserve=None, max=None):
       yield val
 
-class WriteQueue(ABC, Generic[A]):
+class WriteQueue(Transactional, Generic[A]):
   """A write-only view of a `Queue`"""
   @abstractmethod
   async def push(self, key: str, value: A):
