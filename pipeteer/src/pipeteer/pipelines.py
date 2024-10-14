@@ -35,7 +35,7 @@ class Pipeline(ABC, Generic[A, B, Ctx]):
   name: str
 
   def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> WriteQueue[A]:
-    return ctx.backend.queue(prefix, self.type)
+    return ctx.backend.queue(prefix + (self.name,), self.type)
 
   @abstractmethod
   def run(self, Qout: WriteQueue[B], ctx: Ctx, /, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
@@ -62,7 +62,7 @@ class Task(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     Qin = self.input(ctx, prefix=prefix)
-    ctx = ctx.prefix(prefix)
+    ctx = ctx.prefix(prefix + (self.name,))
 
     @P.run
     async def runner(Qin: ReadQueue[A], Qout: WriteQueue[B]):
@@ -76,7 +76,7 @@ class Task(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
         except Exception as e:
           ctx.log(f'Error: {e}', level='ERROR')
 
-    return lambda: Process(target=runner, args=(Qin, Qout))
+    return { self.name: lambda: Process(target=runner, args=(Qin, Qout)) }
   
 
 def param_type(fn, idx=0):
@@ -118,7 +118,7 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
       return self.states[self.step]
     else:
       self.ctx.log(f'Running step {self.step}: {pipe.name}({self.states[self.step-1]}) [{self.key}]', level='DEBUG')
-      Qin = pipe.input(self.ctx, prefix=self.prefix + (pipe.name,))
+      Qin = pipe.input(self.ctx, prefix=self.prefix)
       await Qin.push(self.key, x)
       raise Stop()
 
@@ -127,19 +127,22 @@ class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
   pipelines: list[Pipeline]
   call: Callable[[A, WorkflowContext], Awaitable[B]]
 
+  def states(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue:
+    return ctx.backend.list_queue(prefix + (self.name, '_states'), self.type)
+
   async def rerun(self, key: str, ctx: Ctx, *, prefix: tuple[str, ...]):
-    states = await ctx.backend.list_queue(prefix + ('_states',), self.type).read(key)
-    wkf_ctx = WkfContext(ctx, prefix, states, key)
+    states = await self.states(ctx, prefix=prefix).read(key)
+    wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
     return await self.call(states[0], wkf_ctx)
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     
     Qin = self.input(ctx, prefix=prefix)
-    Qstates = ctx.backend.list_queue(prefix + ('_states',), self.type)
+    Qstates = self.states(ctx, prefix=prefix)
 
     @P.run
     async def runner(Qin: ReadQueue[A], Qout: WriteQueue[B], Qstates: ListQueue, ctx: Ctx, prefix: tuple[str, ...]):
-      ctx = ctx.prefix(prefix)
+      ctx = ctx.prefix(prefix + (self.name,))
       while True:
         try:
           key, val = await Qin.wait_any()
@@ -158,9 +161,9 @@ class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
 
     procs = dict(_root=lambda: Process(target=runner, args=(Qin, Qout, Qstates, ctx, prefix)))
     for pipe in self.pipelines:
-      procs[pipe.name] = pipe.run(Qin, ctx, prefix=prefix + (pipe.name,)) # type: ignore
+      procs |= pipe.run(Qin, ctx, prefix=prefix + (self.name,)) # type: ignore
 
-    return procs
+    return { self.name: procs }
   
 
 def workflow(pipelines: list[Pipeline[Any, Any, Ctx]], name: str | None = None):

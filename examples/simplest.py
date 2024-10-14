@@ -24,14 +24,13 @@ async def series(xs: list[int], ctx: WorkflowContext) -> int:
     acc += await ctx.call(linear, x)
   return acc
 
-
 if __name__ == '__main__':
-  ctx = Context.sqlite('bench.db')
+  ctx = Context.sqlite('simplest.db')
   Qin = series.input(ctx)
   Qout = ctx.backend.output(int)
 
   async def tasks():
-    for i in range(100):
+    for i in range(5):
       ctx.log(f'Pushing {i}')
       await Qin.push(str(i), [1, 2, 3])
       # await asyncio.sleep(0.1)
@@ -39,7 +38,7 @@ if __name__ == '__main__':
   def run():
     asyncio.run(tasks())
 
-  # proc = Process(target=run)
-  # proc.start()
+  proc = Process(target=run)
+  proc.start()
   series.run_all(Qout, ctx)
-  # proc.join()
+  proc.join()
