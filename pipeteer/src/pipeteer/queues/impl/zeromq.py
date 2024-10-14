@@ -58,7 +58,7 @@ class ReadZeroMQueue(ReadQueue[T], Generic[T]):
       result = await self.queue.wait_any(reserve=reserve)
       if result:
         return result
-      print('Backing off...:', t0 * exp)
+      
       await asyncio.sleep(t0 * exp)
       exp *= 2
 

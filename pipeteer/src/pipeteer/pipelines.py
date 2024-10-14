@@ -24,6 +24,10 @@ class Context:
   @classmethod
   def sqlite(cls, path: str):
     return cls(Backend.sqlite(path))
+  
+  @classmethod
+  def sql(cls, url: str):
+    return cls(Backend.sql(url))
 
 Ctx = TypeVar('Ctx', bound=Context, default=Any)
 
@@ -118,7 +122,6 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
     if self.step < len(self.states):
       return self.states[self.step]
     else:
-      self.ctx.log(f'Running step {self.step}: {pipe.name}({self.states[self.step-1]}) [{self.key}]', level='DEBUG')
       Qin = pipe.input(self.ctx, prefix=self.prefix)
       await Qin.push(self.key, x)
       raise Stop()
@@ -147,18 +150,21 @@ class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
       while True:
         try:
           key, val = await Qin.wait_any()
-          await Qstates.append(key, val)
+          
+          states = (await Qstates.safe_read(key) or []) + [val]
+          wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
           try:
-            out = await self.rerun(key, ctx, prefix=prefix)
-            ctx.log(f'Outputting {out} [{key}]', level='DEBUG')
-            await Qout.push(key, out)
+            out = await self.call(states[0], wkf_ctx)
             await Qstates.pop(key)
+            await Qout.push(key, out)
+
           except Stop:
-            ...
+            await Qstates.append(key, val)
+
           await Qin.pop(key)
-        
+
         except Exception as e:
-          ctx.log(f'Error: {e}', level='ERROR')
+          ctx.log('Error', e, level='ERROR')
 
     procs = dict(_root=lambda: Process(target=runner, args=(Qin, Qout, Qstates, ctx, prefix)))
     for pipe in self.pipelines:
