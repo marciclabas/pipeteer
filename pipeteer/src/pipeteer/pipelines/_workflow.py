@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from multiprocessing import Process
 from haskellian import Tree, promise as P
-from pipeteer.pipelines import Pipeline, Context, Artifact
+from pipeteer.pipelines import Pipeline, Context
 from pipeteer.queues import ReadQueue, WriteQueue, ListQueue
 from pipeteer.util import param_type
 
@@ -11,12 +11,13 @@ A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
 Ctx = TypeVar('Ctx', bound=Context)
+Artifact = TypeVar('Artifact')
 
 class Stop(Exception):
   ...
 
 class WorkflowContext(Protocol):
-  async def call(self, pipe: Pipeline[A, B], x: A, /) -> B:
+  async def call(self, pipe: Pipeline[A, B, Any, Any], x: A, /) -> B:
     ...
 
 @dataclass
@@ -27,7 +28,7 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
   key: str
   step: int = 0
 
-  async def call(self, pipe: Pipeline[A, B, Ctx], x: A, /) -> B:
+  async def call(self, pipe: Pipeline[A, B, Ctx, Any], x: A, /) -> B:
     self.step += 1
     if self.step < len(self.states):
       return self.states[self.step]
@@ -37,7 +38,7 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
       raise Stop()
 
 @dataclass
-class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
+class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A, B, Ctx, Artifact]):
   pipelines: list[Pipeline]
   call: Callable[[A, WorkflowContext], Awaitable[B]]
 
@@ -49,7 +50,7 @@ class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
     wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
     return await self.call(states[0], wkf_ctx)
 
-  def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
+  def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()):
     
     Qin = self.input(ctx, prefix=prefix)
     Qstates = self.states(ctx, prefix=prefix)
@@ -83,8 +84,8 @@ class Workflow(Pipeline[A, B, Ctx], Generic[A, B, Ctx]):
     return { self.name: procs }
   
 
-def workflow(pipelines: list[Pipeline[Any, Any, Ctx]], name: str | None = None):
-  def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B, Ctx]:
+def workflow(pipelines: list[Pipeline[Any, Any, Ctx, Artifact]], name: str | None = None):
+  def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B, Ctx, Artifact]:
     return Workflow(
       type=param_type(fn),
       name=name or fn.__name__,

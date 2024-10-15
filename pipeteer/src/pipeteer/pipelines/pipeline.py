@@ -1,15 +1,16 @@
-from typing_extensions import TypeVar, Generic, Callable, Awaitable, Protocol, get_type_hints, Any, Self
+from typing_extensions import TypeVar, Generic, Callable, Self, Protocol, Sequence
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
 from multiprocessing import Process
-from haskellian import Tree, trees, promise as P
+from haskellian import Tree, trees
 from dslog import Logger
-from pipeteer import Queue, ReadQueue, WriteQueue, Backend, ListQueue, Transaction
+from pipeteer import Queue, WriteQueue, Backend
 
-A = TypeVar('A', default=Any)
-B = TypeVar('B', default=Any)
-C = TypeVar('C', default=Any)
+A = TypeVar('A')
+B = TypeVar('B')
+C = TypeVar('C')
+D = TypeVar('D', contravariant=True)
+Artifact = TypeVar('Artifact', covariant=True)
 
 @dataclass
 class Context:
@@ -28,12 +29,17 @@ class Context:
   def sql(cls, url: str):
     return cls(Backend.sql(url))
 
-Ctx = TypeVar('Ctx', bound=Context, default=Any)
+Ctx = TypeVar('Ctx', bound=Context)
 
-Artifact = Callable[[], Process]
+class Executor(Protocol, Generic[D]):
+  def __call__(self, path: Sequence[str], artifact: D, /) -> Process:
+    ...
+
+def default_executor(_, artifact: Callable[[], Process]) -> Process:
+  return artifact()
 
 @dataclass
-class Pipeline(ABC, Generic[A, B, Ctx]):
+class Pipeline(ABC, Generic[A, B, Ctx, Artifact]):
   type: type[A]
   name: str
 
@@ -44,9 +50,12 @@ class Pipeline(ABC, Generic[A, B, Ctx]):
   def run(self, Qout: WriteQueue[B], ctx: Ctx, /, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     ...
 
-  def run_all(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()):
+  def run_all(
+    self, Qout: WriteQueue[B], ctx: Ctx, *,
+    prefix: tuple[str, ...] = (), executor: Executor[Artifact] = default_executor
+  ):
     procs = self.run(Qout, ctx, prefix=prefix)
-    procs = trees.map(procs, lambda proc: proc())
+    procs = trees.path_map(procs, executor)
     
     for path, proc in trees.flatten(procs):
       key = '/'.join((k for k in path if k != '_root'))

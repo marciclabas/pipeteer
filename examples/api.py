@@ -6,7 +6,7 @@ import uvicorn
 from pipeteer import activity, task, workflow, Context, WorkflowContext, ReadQueue, WriteQueue
 
 @task()
-def manual_review(Qin: ReadQueue[str], Qout: WriteQueue[bool]):
+def manual_validate(Qin: ReadQueue[str], Qout: WriteQueue[bool]):
   app = FastAPI()
 
   @app.get('/tasks')
@@ -18,40 +18,36 @@ def manual_review(Qin: ReadQueue[str], Qout: WriteQueue[bool]):
     await Qout.push(key, approve)
     await Qin.pop(key)
 
-  return lambda: Process(target=uvicorn.run, args=(app,))
+  return app
 
 @activity()
-async def double(x: int, ctx: Context) -> int:
-  ctx.log(f'Doubling {x}')
-  return 2*x
+async def autopreprocess(x: str) -> str:
+  ctx.log(f'Preprocessing {x}')
+  return f'Preprocessed {x}'
 
-@activity()
-async def inc(x: int) -> int:
-  ctx.log(f'Incrementing {x}')
-  return x + 1
-
-@workflow([double, inc])
-async def linear(x: int, ctx: WorkflowContext) -> int:
-  x2 = await ctx.call(double, x)
-  x3 = await ctx.call(inc, x2)
-  return x3
-
-@workflow([linear])
-async def series(xs: list[int], ctx: WorkflowContext) -> int:
-  acc = 0
-  for x in xs:
-    acc += await ctx.call(linear, x)
-  return acc
+@workflow([autopreprocess, manual_validate])
+async def preprocess(x: str, ctx: WorkflowContext) -> str:
+  while True:
+    y = await ctx.call(autopreprocess, x)
+    ok = await ctx.call(manual_validate, y)
+    if ok:
+      return y
+    
+def executor(path, artifact):
+  if isinstance(artifact, FastAPI):
+    return Process(target=uvicorn.run, args=(artifact,))
+  else:
+    return artifact()
 
 if __name__ == '__main__':
   ctx = Context.sqlite('simplest.db')
-  Qin = series.input(ctx)
-  Qout = ctx.backend.output(int)
+  Qin = preprocess.input(ctx)
+  Qout = ctx.backend.output(str)
 
   async def activitys():
     for i in range(5):
       ctx.log(f'Pushing {i}')
-      await Qin.push(str(i), [1, 2, 3])
+      await Qin.push(str(i), str(i))
       # await asyncio.sleep(0.1)
   
   def run():
@@ -59,5 +55,5 @@ if __name__ == '__main__':
 
   proc = Process(target=run)
   proc.start()
-  series.run_all(Qout, ctx)
+  preprocess.run_all(Qout, ctx, executor=executor)
   proc.join()
