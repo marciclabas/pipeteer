@@ -159,7 +159,7 @@ class SqlQueue(Queue[T], Generic[T]):
   async def read_any(self, *, reserve: timedelta | None = None) -> tuple[str, T] | None:
     return await self.with_session(self._read_any, reserve=reserve)
     
-  async def items(self, *, reserve: timedelta | None, max: int | None) -> AsyncIterable[tuple[str, T]]: 
+  async def items(self, *, reserve: timedelta | None = None, max: int | None = None) -> AsyncIterable[tuple[str, T]]: 
     await self.initialize()
     try:
       async with AsyncSession(self.engine) as s:

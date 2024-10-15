@@ -83,7 +83,7 @@ class ReadZeroMQueue(ReadQueue[T], Generic[T]):
   def read_any(self, *, reserve: timedelta | None = None):
     return self.queue.read_any(reserve=reserve)
   
-  def items(self, *, reserve: timedelta | None, max: int | None):
+  def items(self, *, reserve: timedelta | None = None, max: int | None = None):
     return self.queue.items(reserve=reserve, max=max)
   
   def keys(self):

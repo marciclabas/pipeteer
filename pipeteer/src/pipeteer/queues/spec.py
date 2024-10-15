@@ -49,7 +49,7 @@ class ReadQueue(Transactional, Generic[A]):
       ...
   
   @abstractmethod
-  def items(self, *, reserve: timedelta | None, max: int | None) -> AsyncIterable[tuple[str, A]]:
+  def items(self, *, reserve: timedelta | None = None, max: int | None = None) -> AsyncIterable[tuple[str, A]]:
     """Iterate over the queue's items
     - `reserve`: reservation reserve for each iterated item. If not acknowledged within this time, items will become visible again
     - `max`: maximum number of items to iterate over (and reserve)
