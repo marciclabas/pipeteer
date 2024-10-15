@@ -1,3 +1,4 @@
+mod pipeteer
 
 VENV := ".venv"
 BIN := ".venv/bin"

@@ -4,19 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pipeteer"
-version = "0.1.0"
+version = "0.3.0"
 authors = [
-  {name="Marcel Claramunt", email="marcel@moveread.com"}
+  {name="Marcel Claramunt", email="marcel@marcelc.uk"}
 ]
-description = "package_description"
+description = "Simple, explicit durable execution framework."
 dependencies = [
-  
+  "haskellian", "zmq", "sqlmodel", "pydantic"
 ]
 requires-python = ">=3.10"
 readme = {file="README.md", content-type="text/markdown"}
 
 [project.urls]
-repo = "https://github.com/moveread/REPO.git"
+repo = "https://github.com/marciclabas/pipeteer.git"
+docs = "https://marciclabas.github.io/pipeteer/"
 
 # [project.optional-dependencies]
 # test = [

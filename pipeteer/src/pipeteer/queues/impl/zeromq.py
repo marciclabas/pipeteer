@@ -1,10 +1,10 @@
-from typing_extensions import AsyncIterable, TypeVar, Generic, Iterable, Coroutine, Any
+from typing_extensions import TypeVar, Generic, Iterable, Coroutine, Any
 import asyncio
 from functools import cached_property
 from dataclasses import dataclass, field
 from datetime import timedelta
 import zmq
-from zmq.asyncio import Socket, Context
+from zmq.asyncio import Context
 from pipeteer import Queue, WriteQueue, ReadQueue
 
 T = TypeVar('T')
