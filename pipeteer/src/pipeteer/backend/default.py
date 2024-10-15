@@ -1,4 +1,4 @@
-from typing import Sequence, TypeVar, Self
+from typing import Sequence, TypeVar
 from dataclasses import dataclass, field
 from functools import cached_property
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pipeteer"
-version = "0.3.0"
+version = "0.3.1"
 authors = [
   {name="Marcel Claramunt", email="marcel@marcelc.uk"}
 ]
 description = "Simple, explicit durable execution framework."
 dependencies = [
-  "haskellian", "zmq", "sqlmodel", "pydantic"
+  "haskellian", "zmq", "sqlmodel", "pydantic", "dslog",
 ]
 requires-python = ">=3.10"
 readme = {file="README.md", content-type="text/markdown"}
