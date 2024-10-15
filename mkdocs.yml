@@ -10,6 +10,7 @@ nav:
   - Home: index.md
   - Queues: queues.md
   - Pipelines: pipelines.md
+  - Transactions: transactions.md
 
 markdown_extensions:
   - pymdownx.highlight:

@@ -2,57 +2,37 @@
 
 Pipeteer **simplifies the complexity of durable execution** whilst *not hiding the underlying persistence*.
 
-## A simple example
+## Why Pipeteer?
 
-### Workflow Definition
+Use `pipeteer` if you need...
+
+- **Persistance**: your app can stop or crash and resume at any time without losing progress
+- **Observability**: you can see the state of your app at any time, and *modify it* programmatically at runtime
+- **Exactly-once semantics**: your app can be stopped and resumed without dropping or duplicating work
+- **Fault tolerance**: if a task fails, it'll keep working on other tasks and retry it later
+- **Explicit data**: `pipeteer`'s high level API is a very thin abstraction over explicit communication using queues
+
+## Proof of Concept
 
 ```python
-# workflow.py
-from pipeteer import task, workflow, Context, Proxy
+from pipeteer import activity, workflow, Context, WorkflowContext
 
-@task()
-async def double(x: int):
+@activity()
+async def double(x: int) -> int:
   return 2*x
 
-@task
-async def inc(x: int):
-  return x+1
+@activity()
+async def inc(x: int) -> int:
+  return x + 1
 
 @workflow([double, inc])
-async def linear(ctx: Context, x: int):
+async def linear(x: int, ctx: WorkflowContext) -> int:
   x2 = await ctx.call(double, x)
   return await ctx.call(inc, x2)
 
 if __name__ == '__main__':
   ctx = Context.sqlite('workflow.db')
-  linear.run(ctx)
+  linear.run_all(ctx)
 ```
 
-### Workflow Execution
-
-```python
-# main.py
-import asyncio
-from pipeteer import Context
-from workflow import Linear
-
-if __name__ == '__main__':
-  wkf = Linear()
-  ctx = Context.sqlite('workflow.db')
-  input_queue = wkf.input(ctx)
-  output_queue = ctx.output
-
-  async def pusher():
-    for i in range(100000):
-      await input_queue.push(f'id-{i}', i)
-      await asyncio.sleep(1)
-
-  async def puller():
-    async for key, value in output_queue:
-      print(f'{key}: {value}')
-      await output_queue.pop(key)
-
-  asyncio.run(asyncio.gather(pusher(), puller()))
-```
-
-The magic is very thin, though. Let's see how it all works under the hood, using [queues](queues.md)
+Let's see how it all works under the hood, using [queues](queues.md)

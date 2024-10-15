@@ -1,6 +1,6 @@
 # Queues
 
-Queues are how `pipeteer`'s pipelines communicate. In essence, a `Queue[T]` is an asynchronouse key-value store (mapping `str -> T`).
+Queues are how `pipeteer`'s pipelines communicate. A `Queue[T]` is an **transactional, async key-value store**.
 
 ## Operations
 
