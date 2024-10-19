@@ -4,7 +4,7 @@ from datetime import timedelta
 from multiprocessing import Process
 from haskellian import Tree, promise as P
 from pipeteer.pipelines import Pipeline, Context
-from pipeteer.queues import ReadQueue, WriteQueue, Transaction
+from pipeteer.queues import Queue, ReadQueue, WriteQueue, Transaction
 from pipeteer.util import param_type, num_params, Func1or2
 
 A = TypeVar('A')
@@ -17,6 +17,9 @@ Artifact = Callable[[], Process]
 class Activity(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx]):
   call: Callable[[A, Ctx], Awaitable[B]]
   reserve: timedelta | None = None
+
+  def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Queue[A]:
+    return ctx.backend.queue(prefix + (self.name,), self.type)
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     Qin = self.input(ctx, prefix=prefix)
@@ -38,7 +41,7 @@ class Activity(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx]):
     return { self.name: lambda: Process(target=runner, args=(Qin, Qout)) }
 
 def activity(name: str | None = None, *, reserve: timedelta | None = timedelta(minutes=2)):
-  def decorator(fn: Func1or2[A, Ctx, Awaitable[B]]) -> Pipeline[A, B, Ctx, Artifact]:
+  def decorator(fn: Func1or2[A, Ctx, Awaitable[B]]) -> Activity[A, B, Ctx]:
     return Activity(
       type=param_type(fn), reserve=reserve, name=name or fn.__name__,
       call=fn if num_params(fn) == 2 else (lambda x, _: fn(x)) # type: ignore

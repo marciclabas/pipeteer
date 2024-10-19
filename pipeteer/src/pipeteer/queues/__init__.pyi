@@ -3,6 +3,7 @@ from .spec import ReadQueue, WriteQueue, Queue, ListQueue
 from .transactions import Transaction, Transactional
 from .impl.sql import SqlQueue, ListSqlQueue
 from .impl.zeromq import ReadZeroMQueue, WriteZeroMQueue, ZeroMQueue
+from . import ops
 
 __all__ = [
   'InexistentItem', 'InfraError', 'QueueError', 'ReadError',
@@ -10,4 +11,5 @@ __all__ = [
   'Transaction', 'Transactional',
   'SqlQueue', 'ListSqlQueue',
   'ReadZeroMQueue', 'WriteZeroMQueue', 'ZeroMQueue',
+  'ops',
 ]

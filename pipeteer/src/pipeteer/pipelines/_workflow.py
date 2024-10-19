@@ -1,15 +1,17 @@
-from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol
+from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol, overload
 from dataclasses import dataclass
 from datetime import timedelta
 from multiprocessing import Process
 from haskellian import Tree, promise as P
-from pipeteer.pipelines import Pipeline, Context
-from pipeteer.queues import ReadQueue, WriteQueue, ListQueue
+from pipeteer.pipelines import Pipeline, Inputtable, Context, Runnable
+from pipeteer.queues import Queue, ReadQueue, WriteQueue, ListQueue, ops
 from pipeteer.util import param_type
 
+Aw = Awaitable
 A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
+D = TypeVar('D')
 Ctx = TypeVar('Ctx', bound=Context)
 Artifact = TypeVar('Artifact')
 
@@ -17,8 +19,17 @@ class Stop(Exception):
   ...
 
 class WorkflowContext(Protocol):
-  async def call(self, pipe: Pipeline[A, B, Any, Any], x: A, /) -> B:
+  async def call(self, pipe: Inputtable[A, B, Any], x: A, /) -> B:
     ...
+
+  @overload
+  async def all(self, a: Aw[A], b: Aw[B], /) -> tuple[A, B]: ...
+  @overload
+  async def all(self, a: Aw[A], b: Aw[B], c: Aw[C], /) -> tuple[A, B, C]: ...
+  @overload
+  async def all(self, a: Aw[A], b: Aw[B], c: Aw[C], d: Aw[D], /) -> tuple[A, B, C, D]: ...
+  @overload
+  async def all(self, *coros: Aw[A]) -> tuple[A, ...]: ...
 
 @dataclass
 class WkfContext(WorkflowContext, Generic[Ctx]):
@@ -28,41 +39,78 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
   key: str
   step: int = 0
 
-  async def call(self, pipe: Pipeline[A, B, Ctx, Any], x: A, /) -> B:
+  async def call(self, pipe: Inputtable[A, B, Ctx], x: A, /) -> B:
     self.step += 1
     if self.step < len(self.states):
       return self.states[self.step]
     else:
       Qin = pipe.input(self.ctx, prefix=self.prefix)
-      await Qin.push(self.key, x)
+      await Qin.push(f'{self.step}_{self.key}', x)
       raise Stop()
+    
+  async def all(self, *coros: Awaitable):
+    n = len(coros)
+    if self.step + n < len(self.states):
+      prev = self.step+1
+      self.step += n
+      return tuple(self.states[prev:prev+n])
+    
+    elif self.step+1 == len(self.states):
+      for coro in coros:
+        try:
+          await coro
+        except Stop:
+          ...
+    
+    raise Stop()
 
 @dataclass
 class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A, B, Ctx, Artifact]):
-  pipelines: list[Pipeline]
+  pipelines: list[Runnable]
   call: Callable[[A, WorkflowContext], Awaitable[B]]
 
-  def states(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue:
-    return ctx.backend.list_queue(prefix + (self.name, '_states'), self.type)
+  def states(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue[tuple]:
+    """Actual data store"""
+    return ctx.backend.list_queue(prefix + (self.name, '_states'), tuple[int, self.type])
+  
+  def tasks(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue[str]:
+    """Queue to keep track of tasks"""
+    return ctx.backend.list_queue(prefix + (self.name, '_tasks'), str)
+  
+  def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> WriteQueue[A]:
+    """Input view, creating a singleton state. For inputting new tasks."""
+    return ops.tee(
+      ops.singleton(self.states(ctx, prefix)).premap(lambda x: (0, x)),
+      ops.appender(self.tasks(ctx, prefix)).premap(lambda _: ''),
+      ordered=True
+    )
+  
+  def collector(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> WriteQueue:
+    """Collector view, appending a state. For subpipelines."""
+    def indexed(k: str, v: C) -> tuple[str, tuple[int, C]]:
+      i, key = k.split('_', 1)
+      return key, (int(i), v)
+    return ops.tee(
+      ops.appender(self.states(ctx, prefix)).premap_kv(indexed),
+      ops.appender(self.tasks(ctx, prefix)).premap(lambda _: '').premap_k(lambda k: k.split('_', 1)[1]),
+      ordered=True
+    )
 
-  async def rerun(self, key: str, ctx: Ctx, *, prefix: tuple[str, ...]):
-    states = await self.states(ctx, prefix=prefix).read(key)
-    wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
-    return await self.call(states[0], wkf_ctx)
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()):
     
-    Qin = self.input(ctx, prefix=prefix)
     Qstates = self.states(ctx, prefix=prefix)
+    Qin = self.tasks(ctx, prefix=prefix)
+    Qresults = self.collector(ctx, prefix=prefix)
 
     @P.run
-    async def runner(Qin: ReadQueue[A], Qout: WriteQueue[B], Qstates: ListQueue, ctx: Ctx, prefix: tuple[str, ...]):
+    async def runner(Qin: ReadQueue[list[A]], Qout: WriteQueue[B], Qstates: ListQueue[tuple[int, Any]], ctx: Ctx, prefix: tuple[str, ...]):
       ctx = ctx.prefix(prefix + (self.name,))
       while True:
         try:
-          key, val = await Qin.wait_any()
-          
-          states = (await Qstates.safe_read(key) or []) + [val]
+          key, _ = await Qin.wait_any()
+          states = await Qstates.read(key)
+          states = [v for _, v in sorted(states)]
           wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
           try:
             out = await self.call(states[0], wkf_ctx)
@@ -70,7 +118,7 @@ class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A,
             await Qout.push(key, out)
 
           except Stop:
-            await Qstates.append(key, val)
+            ...
 
           await Qin.pop(key)
 
@@ -79,12 +127,15 @@ class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A,
 
     procs = dict(_root=lambda: Process(target=runner, args=(Qin, Qout, Qstates, ctx, prefix)))
     for pipe in self.pipelines:
-      procs |= pipe.run(Qin, ctx, prefix=prefix + (self.name,)) # type: ignore
+      children = pipe.run(Qresults, ctx, prefix=prefix + (self.name,))
+      if not isinstance(children, dict):
+        children = { pipe.name: children }
+      procs |= children # type: ignore
 
     return { self.name: procs }
   
 
-def workflow(pipelines: list[Pipeline[Any, Any, Ctx, Artifact]], name: str | None = None):
+def workflow(pipelines: list[Runnable[Any, Any, Ctx, Artifact]], name: str | None = None):
   def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B, Ctx, Artifact]:
     return Workflow(
       type=param_type(fn),

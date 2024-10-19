@@ -10,7 +10,7 @@ A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
 D = TypeVar('D', contravariant=True)
-Artifact = TypeVar('Artifact', covariant=True)
+Artifact = TypeVar('Artifact', covariant=True, bound=Tree)
 
 @dataclass
 class Context:
@@ -39,13 +39,17 @@ def default_executor(_, artifact: Callable[[], Process]) -> Process:
   return artifact()
 
 @dataclass
-class Pipeline(ABC, Generic[A, B, Ctx, Artifact]):
+class Inputtable(Generic[A, B, Ctx]):
   type: type[A]
   name: str
 
-  def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Queue[A]:
+  def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> WriteQueue[A]:
     return ctx.backend.queue(prefix + (self.name,), self.type)
-
+  
+@dataclass
+class Runnable(ABC, Generic[A, B, Ctx, Artifact]):
+  name: str
+  
   @abstractmethod
   def run(self, Qout: WriteQueue[B], ctx: Ctx, /, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     ...
@@ -66,3 +70,6 @@ class Pipeline(ABC, Generic[A, B, Ctx, Artifact]):
       key = '/'.join((k for k in path if k != '_root'))
       proc.join()
       ctx.log(f'[{key}] Stopping...')
+
+class Pipeline(Runnable[A, B, Ctx, Artifact], Inputtable[A, B, Ctx]):
+  ...

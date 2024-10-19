@@ -1,10 +1,12 @@
-from typing_extensions import TypeVar, Generic, AsyncIterable
+from typing_extensions import TypeVar, Generic, AsyncIterable, Callable
 from abc import abstractmethod
 import asyncio
 from datetime import timedelta
-from pipeteer.queues import InexistentItem, Transactional
+from pipeteer.queues import InexistentItem, Transactional, ops
 
-A = TypeVar('A')
+A = TypeVar('A', covariant=True)
+B = TypeVar('B', contravariant=True)
+C = TypeVar('C')
 
 class ReadQueue(Transactional, Generic[A]):
   """A read/pop-only view of a `Queue`"""
@@ -72,18 +74,35 @@ class ReadQueue(Transactional, Generic[A]):
     async for _, val in self.items(reserve=None, max=None):
       yield val
 
-class WriteQueue(Transactional, Generic[A]):
+class WriteQueue(Transactional, Generic[B]):
   """A write-only view of a `Queue`"""
   @abstractmethod
-  async def push(self, key: str, value: A):
+  async def push(self, key: str, value: B, /):
     """Push an item into the queue
     Throws `InfraError`"""
 
+  def premap(self, mapper: Callable[[C], B]) -> 'WriteQueue[C]':
+    """Map the key-value pair before pushing"""
+    async def f(k: str, v: C):
+      return k, mapper(v)
+    return ops.premap(self, f)
+  
+  def premap_k(self, mapper: Callable[[str], str]) -> 'WriteQueue[B]':
+    """Map the key-value pair before pushing"""
+    async def f(k: str, v: B):
+      return mapper(k), v
+    return ops.premap(self, f)
 
-class Queue(ReadQueue[A], WriteQueue[A], Generic[A]):
+  def premap_kv(self, mapper: Callable[[str, C], tuple[str, B]]) -> 'WriteQueue[C]':
+    """Map the key-value pair before pushing"""
+    async def f(k: str, v: C):
+      return mapper(k, v)
+    return ops.premap(self, f)
+
+class Queue(ReadQueue[C], WriteQueue[C], Generic[C]):
   """A key-value, point-readable queue"""
 
-class ListQueue(Queue[list[A]]):
+class ListQueue(Queue[list[C]], Generic[C]):
   @abstractmethod
-  async def append(self, key: str, value: A):
+  async def append(self, key: str, value: C, /):
     ...
