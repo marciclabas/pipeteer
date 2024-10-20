@@ -55,7 +55,7 @@ class ReadZeroMQueue(ReadQueue[T], Generic[T]):
     t0 = poll_interval.total_seconds()
     exp = 1
     while True:
-      result = await self.queue.wait_any(reserve=reserve)
+      result = await self.queue.read_any(reserve=reserve)
       if result:
         return result
       
