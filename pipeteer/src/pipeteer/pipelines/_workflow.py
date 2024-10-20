@@ -1,11 +1,11 @@
-from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol, overload
+from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol, overload, Union
 from dataclasses import dataclass
 from datetime import timedelta
 from multiprocessing import Process
 from haskellian import Tree, promise as P
 from pipeteer.pipelines import Pipeline, Inputtable, Context, Runnable
 from pipeteer.queues import Queue, ReadQueue, WriteQueue, ListQueue, ops
-from pipeteer.util import param_type
+from pipeteer.util import param_type, return_type
 
 Aw = Awaitable
 A = TypeVar('A')
@@ -71,7 +71,8 @@ class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A,
 
   def states(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue[tuple]:
     """Actual data store"""
-    return ctx.backend.list_queue(prefix + (self.name, '_states'), tuple[int, self.type])
+    type = Union[self.Tin, *(pipe.Tout for pipe in self.pipelines)] # type: ignore
+    return ctx.backend.list_queue(prefix + (self.name, '_states'), tuple[int, type])
   
   def tasks(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue[str]:
     """Queue to keep track of tasks"""
@@ -109,6 +110,7 @@ class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A,
       while True:
         try:
           key, _ = await Qin.wait_any()
+          ctx.log('Processing:', key, level='DEBUG')
           states = await Qstates.read(key)
           states = [v for _, v in sorted(states)]
           wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
@@ -135,12 +137,24 @@ class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A,
     return { self.name: procs }
   
 
-def workflow(pipelines: list[Runnable[Any, Any, Ctx, Artifact]], name: str | None = None):
+def workflow(
+  pipelines: list[Runnable[Any, Any, Ctx, Artifact]],
+  *, name: str | None = None,
+  Tin: type[A] | None = None, Tout: type[B] | None = None,
+):
   def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B, Ctx, Artifact]:
+    Tin_ = Tin or param_type(fn)
+    if Tin_ is None:
+      raise TypeError(f'Activity {fn.__name__} must have a type hint for its input parameter')
+
+    Tout_ = Tout or return_type(fn)
+    if Tout_ is None:
+      raise TypeError(f'Activity {fn.__name__} must have a type hint for its return value')
+    
     return Workflow(
-      type=param_type(fn),
+      Tin=Tin_, Tout=Tout_,
       name=name or fn.__name__,
       pipelines=pipelines,
-      call=fn,
-    )
+      call=fn, # type: ignore
+    ) # type: ignore	
   return decorator

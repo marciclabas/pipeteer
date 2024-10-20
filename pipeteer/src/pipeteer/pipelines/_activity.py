@@ -5,7 +5,7 @@ from multiprocessing import Process
 from haskellian import Tree, promise as P
 from pipeteer.pipelines import Pipeline, Context
 from pipeteer.queues import Queue, ReadQueue, WriteQueue, Transaction
-from pipeteer.util import param_type, num_params, Func1or2
+from pipeteer.util import param_type, return_type, num_params, Func1or2
 
 A = TypeVar('A')
 B = TypeVar('B')
@@ -19,7 +19,7 @@ class Activity(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx]):
   reserve: timedelta | None = None
 
   def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Queue[A]:
-    return ctx.backend.queue(prefix + (self.name,), self.type)
+    return ctx.backend.queue(prefix + (self.name,), self.Tin)
 
   def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
     Qin = self.input(ctx, prefix=prefix)
@@ -40,10 +40,21 @@ class Activity(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx]):
 
     return { self.name: lambda: Process(target=runner, args=(Qin, Qout)) }
 
-def activity(name: str | None = None, *, reserve: timedelta | None = timedelta(minutes=2)):
+def activity(
+  name: str | None = None, *,
+  reserve: timedelta | None = timedelta(minutes=2),
+):
   def decorator(fn: Func1or2[A, Ctx, Awaitable[B]]) -> Activity[A, B, Ctx]:
+    Tin = param_type(fn)
+    if Tin is None:
+      raise TypeError(f'Activity {fn.__name__} must have a type hint for its input parameter')
+
+    Tout = return_type(fn)
+    if Tout is None:
+      raise TypeError(f'Activity {fn.__name__} must have a type hint for its return value')
+
     return Activity(
-      type=param_type(fn), reserve=reserve, name=name or fn.__name__,
+      Tin=Tin or param_type(fn), Tout=Tout or return_type(fn), reserve=reserve, name=name or fn.__name__,
       call=fn if num_params(fn) == 2 else (lambda x, _: fn(x)) # type: ignore
     )
       
