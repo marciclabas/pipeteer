@@ -1,16 +1,16 @@
 from typing_extensions import AsyncIterable, TypeVar, Generic, ParamSpec, \
   Protocol, Awaitable, Callable, Coroutine, Any
-from functools import wraps
+from functools import wraps, cached_property
 from datetime import timedelta, datetime
 from pydantic import RootModel, TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.exc import DatabaseError
-from sqlalchemy.types import JSON
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqltypes import ValidatedJSON
 from sqlmodel import select, text, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
 from pipeteer.queues import Queue, ListQueue, QueueError, InfraError, InexistentItem
+from pipeteer.util import type_arg
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -44,15 +44,15 @@ class SqlQueue(Queue[T], Generic[T]):
     self.engine = engine
     self.table = table
     self.session: AsyncSession | None = None
+    self.type = type
 
     class Base(DeclarativeBase):
       ...
 
-    json_type = JSONB if self.engine.dialect.name == 'postgresql' else JSON
     class Table(Base):
       __tablename__ = table
       key: Mapped[str] = mapped_column(primary_key=True)
-      value: Mapped[RootModel[type]] = mapped_column(type_=json_type) # type: ignore
+      value: Mapped[RootModel[Any]] = mapped_column(type_=ValidatedJSON(type)) # type: ignore
       ttl: Mapped[datetime|None] = mapped_column(default=None)
 
     self.Table = Table
@@ -212,12 +212,19 @@ class SqlQueue(Queue[T], Generic[T]):
     if not isinstance(other, SqlQueue) or other.engine.url != self.engine.url:
       await self.session.rollback()
     
-adapter = TypeAdapter(Any)
-
 class ListSqlQueue(ListQueue[T], SqlQueue[list[T]], Generic[T]):
+
+  @cached_property
+  def adapter(self):
+    return TypeAdapter(self.type)
+  
+  @cached_property
+  def single_adapter(self):
+    return TypeAdapter(type_arg(self.type))
+
   async def _append(self, s: AsyncSession, key: str, value: T):
-    single = adapter.dump_json([value]).decode()
-    obj = adapter.dump_json(value).decode()
+    single = self.adapter.dump_json([value]).decode()
+    obj = self.single_adapter.dump_json(value).decode()
     if s.bind.dialect.name == 'postgresql':
       stmt = f'''
         INSERT INTO "{self.table}" (key, value)
