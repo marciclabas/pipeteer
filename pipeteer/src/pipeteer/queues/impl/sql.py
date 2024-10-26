@@ -35,10 +35,10 @@ exec_options = {}
 
 class SqlQueue(Queue[T], Generic[T]):
 
-  @classmethod
-  def new(cls, type: type[T], url: str, *, table: str, echo: bool = False) -> 'SqlQueue[T]':
+  @staticmethod
+  def new(type: type[U], url: str, *, table: str, echo: bool = False) -> 'SqlQueue[U]':
     engine = create_async_engine(url, echo=echo)
-    return cls(type, engine, table=table)
+    return SqlQueue(type, engine, table=table)
 
   def __init__(self, type: type[T], engine: AsyncEngine, *, table: str):
     self.engine = engine
@@ -183,6 +183,12 @@ class SqlQueue(Queue[T], Generic[T]):
           
     except DatabaseError as e:
       raise InfraError(e) from e
+    
+  async def _clear(self, s: AsyncSession):
+    await s.execute(text(f'DELETE FROM "{self.table}"'))
+    
+  async def clear(self):
+    return await self.with_autocommit(self._clear)
   
   @wrap_exceptions
   async def enter(self, other=None):

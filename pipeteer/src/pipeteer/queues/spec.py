@@ -1,5 +1,6 @@
 from typing_extensions import TypeVar, Generic, AsyncIterable, Callable
 from abc import abstractmethod
+from dataclasses import dataclass
 import asyncio
 from datetime import timedelta
 from pipeteer.queues import InexistentItem, Transactional, ops
@@ -10,6 +11,8 @@ C = TypeVar('C')
 
 class ReadQueue(Transactional, Generic[A]):
   """A read/pop-only view of a `Queue`"""
+
+  type: 'type[A]'
 
   @abstractmethod
   async def pop(self, key: str, /):
@@ -51,12 +54,14 @@ class ReadQueue(Transactional, Generic[A]):
       ...
   
   @abstractmethod
-  def items(self, *, reserve: timedelta | None = None, max: int | None = None) -> AsyncIterable[tuple[str, A]]:
+  async def items(self, *, reserve: timedelta | None = None, max: int | None = None) -> AsyncIterable[tuple[str, A]]:
     """Iterate over the queue's items
     - `reserve`: reservation reserve for each iterated item. If not acknowledged within this time, items will become visible again
     - `max`: maximum number of items to iterate over (and reserve)
     - Throws `InfraError`
     """
+    async for key in self.keys():
+      yield key, await self.read(key, reserve=reserve)
   
   async def has(self, key: str, /, *, reserve: timedelta | None = None) -> bool:
     """Check if a specific item is in the queue
@@ -64,6 +69,11 @@ class ReadQueue(Transactional, Generic[A]):
     - Throws `InfraError`
     """
     return await self.safe_read(key, reserve=reserve) is not None
+  
+  @abstractmethod
+  async def clear(self):
+    """Delete all items
+    - Throws `InfraError`"""
     
   
   async def keys(self) -> AsyncIterable[str]:
@@ -76,6 +86,9 @@ class ReadQueue(Transactional, Generic[A]):
 
 class WriteQueue(Transactional, Generic[B]):
   """A write-only view of a `Queue`"""
+
+  type: 'type[B]'
+
   @abstractmethod
   async def push(self, key: str, value: B, /):
     """Push an item into the queue
@@ -98,9 +111,17 @@ class WriteQueue(Transactional, Generic[B]):
     async def f(k: str, v: C):
       return mapper(k, v)
     return ops.premap(self, f)
+  
+class Sink(WriteQueue[B], Generic[B]):
+  async def push(self, key: str, value: B):
+    ...
 
 class Queue(ReadQueue[C], WriteQueue[C], Generic[C]):
   """A key-value, point-readable queue"""
+
+  @classmethod
+  def sink(cls) -> WriteQueue[C]:
+    return Sink()
 
 class ListQueue(Queue[list[C]], Generic[C]):
   @abstractmethod

@@ -94,6 +94,9 @@ class ReadZeroMQueue(ReadQueue[T], Generic[T]):
   
   def values(self):
     return self.queue.values()
+  
+  def clear(self):
+    return self.queue.clear()
         
 @dataclass
 class ZeroMQueue(Queue[T], ReadZeroMQueue[T], WriteZeroMQueue[T], Generic[T]):
