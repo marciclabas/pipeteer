@@ -6,12 +6,12 @@ from pipeteer.queues import ReadQueue, WriteQueue, Queue, QueueError, Inexistent
 
 T = TypeVar('T')
 
-def write_api(queue: WriteQueue[T]) -> FastAPI:
+def write_api(queue: WriteQueue[T], type: type[T]) -> FastAPI:
   app = FastAPI(generate_unique_id_function=lambda route: route.name)
 
-  parse = TypeAdapter(queue.type).validate_json
+  parse = TypeAdapter(type).validate_json
 
-  @app.post('/{key}', responses={500: {'model': QueueError}, 404: {'model': InexistentItem}})
+  @app.post('/{key:path}', responses={500: {'model': QueueError}, 404: {'model': InexistentItem}})
   async def push(key: str, req: Request, res: Response):
     try:
       value = parse(await req.body())
@@ -31,7 +31,7 @@ def write_api(queue: WriteQueue[T]) -> FastAPI:
 def read_api(queue: ReadQueue[T]) -> FastAPI:
   app = FastAPI(generate_unique_id_function=lambda route: route.name)
 
-  @app.delete('/item/{key}', responses={500: {'model': QueueError}, 404: {'model': InexistentItem}})
+  @app.delete('/item/{key:path}', responses={500: {'model': QueueError}, 404: {'model': InexistentItem}})
   async def pop(key: str, r: Response):
     try:
       return await queue.pop(key)
@@ -50,7 +50,7 @@ def read_api(queue: ReadQueue[T]) -> FastAPI:
       r.status_code = 500
       return e # type: ignore
     
-  @app.get('/item/{key}', responses={500: {'model': QueueError}, 404: {'model': InexistentItem}})
+  @app.get('/item/{key:path}', responses={500: {'model': QueueError}, 404: {'model': InexistentItem}})
   async def read(key: str, r: Response) -> T:
     try:
       return await queue.read(key)
@@ -80,8 +80,8 @@ def read_api(queue: ReadQueue[T]) -> FastAPI:
   return app
 
 
-def queue_api(queue: Queue[T]) -> FastAPI:
+def queue_api(queue: Queue[T], type: type[T]) -> FastAPI:
   app = FastAPI(generate_unique_id_function=lambda route: route.name)
-  app.mount('/write', write_api(queue))
+  app.mount('/write', write_api(queue, type))
   app.mount('/read', read_api(queue))
   return app

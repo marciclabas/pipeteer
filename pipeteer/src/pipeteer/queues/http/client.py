@@ -1,39 +1,54 @@
 from datetime import timedelta
-from typing_extensions import AsyncIterable, TypeVar, Generic, Callable, Awaitable, ParamSpec
+from typing_extensions import AsyncIterable, TypeVar, Generic, ParamSpec, Awaitable, Callable
 from dataclasses import dataclass
-from urllib.parse import quote_plus
 from pydantic import TypeAdapter, ValidationError
 try:
   import httpx
 except ImportError:
   raise ImportError('Please install `httpx` to use HTTP Queue clients')
-from pipeteer.queues import ReadQueue, WriteQueue, QueueError, InfraError
+from pipeteer.queues import ReadQueue, WriteQueue, QueueError, InfraError, Transactional
 
 T = TypeVar('T')
+U = TypeVar('U')
 Ps = ParamSpec('Ps')
 
-class ClientMixin(Generic[T]):
+class ClientMixin(Transactional, Generic[T]):
   def __init__(self, url: str, type: 'type[T]'):
     self.url = url
     self.type = type
     self.adapter = TypeAdapter(type)
-    self._client: httpx.AsyncClient | None = None
+    self.client: httpx.AsyncClient | None = None
+  
+  async def enter(self, other=None):
+    self.client = httpx.AsyncClient()
+  
+  async def close(self, other=None):
+    if self.client:
+      await self.client.aclose()
+      self.client = None
 
-  @property
-  def client(self):
-    if self._client is None:
-      raise RuntimeError('Please use the client as an async context manager (`async with client: ...`)')
-    return self._client
-  
-  async def __aenter__(self) -> 'ClientMixin[T]':
-    self._client = httpx.AsyncClient()
-    return self
-  
-  async def __aexit__(self, *_):
-    if self._client:
-      await self._client.aclose()
-      self._client = None
-  
+  async def with_client(self, f: Callable[[httpx.AsyncClient], Awaitable[U]]) -> U:
+    try:
+      if self.client is None:
+        async with httpx.AsyncClient() as client:
+          return await f(client)
+      else:
+        return await f(self.client)
+    except httpx.RequestError as e:
+      raise InfraError(e) from e
+    
+  async def with_client_iter(self, f: Callable[[httpx.AsyncClient], AsyncIterable[U]]) -> AsyncIterable[U]:
+    try:
+      if self.client is None:
+        async with httpx.AsyncClient() as client:
+          async for item in f(client):
+            yield item
+      else:
+        async for item in f(self.client):
+          yield item
+    except httpx.RequestError as e:
+      raise InfraError(e) from e
+
 def urljoin(*parts: str) -> str:
   return '/'.join(part.strip('/') for part in parts)
 
@@ -44,23 +59,22 @@ class WriteClient(ClientMixin[T], WriteQueue[T], Generic[T]):
   def __init__(self, url: str, type: 'type[T]'):
     super().__init__(url, type)
     self.dump = self.adapter.dump_json
-  
+
   async def push(self, key: str, value: T):
-    try:
-      r = await self.client.post(
-        urljoin(self.url, 'write', quote_plus(key)),
+    async def _push(client: httpx.AsyncClient):
+      url = urljoin(self.url, 'write', key)
+      r = await client.post(
+        url,
         data=self.dump(value), # type: ignore
         headers={'Content-Type': 'application/json'},
       )
-
       if r.status_code != 200:
         try:
           raise err_adapter.validate_json(r.content)
-        except ValidationError as e:
+        except ValidationError:
           raise QueueError(f'Error pushing to {self.url}: {r.content}')
         
-    except httpx.RequestError as e:
-      raise InfraError(f'Error pushing to {self.url}: {e}')
+    return await self.with_client(_push)
     
 @dataclass
 class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
@@ -71,24 +85,23 @@ class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
     self.parse_entry = TypeAdapter(tuple[str, self.type]|None).validate_json
   
   async def pop(self, key: str):
-    try:
-      url = urljoin(self.url, 'read/item', quote_plus(key))
-      r = await self.client.delete(url)
+    async def _pop(client: httpx.AsyncClient):
+      url = urljoin(self.url, 'read/item', key)
+      r = await client.delete(url)
       if r.status_code != 200:
         try:
           raise err_adapter.validate_json(r.content)
         except ValidationError as e:
           raise QueueError(f'Error popping from {self.url}: {r.content}')
         
-    except httpx.RequestError as e:
-      raise InfraError(f'Error popping from {self.url}: {e}')
+    return await self.with_client(_pop)
     
   
   async def read(self, key: str, /, *, reserve: timedelta | None = None) -> T:
-    try:
-      url = urljoin(self.url, 'read/item', quote_plus(key))
+    async def _read(client: httpx.AsyncClient):
+      url = urljoin(self.url, 'read/item', key)
       params = {'reserve': reserve.total_seconds()} if reserve is not None else {}
-      r = await self.client.get(url, params=params)
+      r = await client.get(url, params=params)
       if r.status_code != 200:
         try:
           raise err_adapter.validate_json(r.content)
@@ -97,15 +110,13 @@ class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
         
       return self.parse(r.content)
     
-    except httpx.RequestError as e:
-      raise InfraError(f'Error reading from {self.url}: {e}')
-    
+    return await self.with_client(_read)
 
   async def read_any(self, *, reserve: timedelta | None = None) -> tuple[str, T] | None:
-    try:
+    async def _ready_any(client: httpx.AsyncClient):
       url = urljoin(self.url, 'read/item')
       params = {'reserve': reserve.total_seconds()} if reserve is not None else {}
-      r = await self.client.get(url, params=params)
+      r = await client.get(url, params=params)
       if r.status_code != 200:
         try:
           raise err_adapter.validate_json(r.content)
@@ -114,14 +125,12 @@ class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
         
       return self.parse_entry(r.content)
     
-    except httpx.RequestError as e:
-      raise InfraError(f'Error reading from {self.url}: {e}')
-    
+    return await self.with_client(_ready_any)
   
-  async def keys(self) -> AsyncIterable[str]:
-    try:
+  def keys(self) -> AsyncIterable[str]:
+    async def _keys(client: httpx.AsyncClient):
       url = urljoin(self.url, 'read/keys')
-      r = await self.client.get(url)
+      r = await client.get(url)
       if r.status_code != 200:
         try:
           raise err_adapter.validate_json(r.content)
@@ -130,23 +139,21 @@ class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
         
       for key in TypeAdapter(list[str]).validate_json(r.content):
         yield key
-    
-    except httpx.RequestError as e:
-      raise InfraError(f'Error reading keys from {self.url}: {e}')
+
+    return self.with_client_iter(_keys)
     
   async def clear(self):
-    try:
+    async def _clear(client: httpx.AsyncClient):
       url = urljoin(self.url, 'read') + '/'
-      r = await self.client.delete(url)
+      r = await client.delete(url)
       if r.status_code != 200:
         try:
           raise err_adapter.validate_json(r.content)
         except ValidationError as e:
           raise QueueError(f'Error clearing {self.url}: {r.content}')
-        
-    except httpx.RequestError as e:
-      raise InfraError(f'Error clearing {self.url}: {e}')
     
+    return await self.with_client(_clear)
+
   def items(self, *, reserve: timedelta | None = None, max: int | None = None) -> AsyncIterable[tuple[str, T]]:
     return super().items(reserve=reserve, max=max)
     
