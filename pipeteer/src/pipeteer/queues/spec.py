@@ -12,8 +12,6 @@ C = TypeVar('C')
 class ReadQueue(Transactional, Generic[A]):
   """A read/pop-only view of a `Queue`"""
 
-  type: 'type[A]'
-
   @abstractmethod
   async def pop(self, key: str, /):
     """Delete a specific item from the queue
@@ -87,8 +85,6 @@ class ReadQueue(Transactional, Generic[A]):
 class WriteQueue(Transactional, Generic[B]):
   """A write-only view of a `Queue`"""
 
-  type: 'type[B]'
-
   @abstractmethod
   async def push(self, key: str, value: B, /):
     """Push an item into the queue
@@ -112,18 +108,32 @@ class WriteQueue(Transactional, Generic[B]):
       return mapper(k, v)
     return ops.premap(self, f)
   
-class Sink(WriteQueue[B], Generic[B]):
-  async def push(self, key: str, value: B):
-    ...
-
 class Queue(ReadQueue[C], WriteQueue[C], Generic[C]):
   """A key-value, point-readable queue"""
 
   @classmethod
-  def sink(cls) -> WriteQueue[C]:
+  def sink(cls):
     return Sink()
 
 class ListQueue(Queue[list[C]], Generic[C]):
   @abstractmethod
   async def append(self, key: str, value: C, /):
+    ...
+
+
+class Sink(Queue[C], Generic[C]):
+  async def push(self, key: str, value: C):
+    ...
+
+  async def pop(self, key: str):
+    ...
+
+  async def read(self, key: str, /, *, reserve: timedelta | None = None) -> C:
+    raise InexistentItem(key)
+  
+  async def items(self, *, reserve: timedelta | None = None, max: int | None = None) -> AsyncIterable[tuple[str, C]]:
+    if False:
+      yield
+
+  async def clear(self):
     ...

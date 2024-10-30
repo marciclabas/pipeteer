@@ -1,47 +1,51 @@
 from typing_extensions import TypeVar, Generic, Callable, Awaitable
 from dataclasses import dataclass
+import asyncio
 from datetime import timedelta
 from multiprocessing import Process
-from haskellian import Tree, promise as P
 from pipeteer.pipelines import Pipeline, Context
-from pipeteer.queues import Queue, ReadQueue, WriteQueue, Transaction
+from pipeteer.queues import Queue, Transaction, Routed
 from pipeteer.util import param_type, return_type, num_params, Func1or2
 
 A = TypeVar('A')
 B = TypeVar('B')
-C = TypeVar('C')
 Ctx = TypeVar('Ctx', bound=Context)
-Artifact = Callable[[], Process]
 
 @dataclass
-class Activity(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx]):
+class Activity(Pipeline[A, B, Ctx, Process], Generic[A, B, Ctx]):
   call: Callable[[A, Ctx], Awaitable[B]]
   reserve: timedelta | None = None
 
-  def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Queue[A]:
-    return ctx.backend.queue(prefix + (self.name,), self.Tin)
+  def input(self, ctx: Ctx) -> Queue[Routed[A]]:
+    return ctx.backend.queue(self.id, Routed[self.Tin])
 
-  def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> Tree[Artifact]:
-    Qin = self.input(ctx, prefix=prefix)
-    ctx = ctx.prefix(prefix + (self.name,))
-
-    @P.run
-    async def runner(Qin: ReadQueue[A], Qout: WriteQueue[B]):
+  def run(self, ctx: Ctx) -> Process:
+    async def loop():
+      Qin = self.input(ctx)
       while True:
         try:
           k, x = await Qin.wait_any(reserve=self.reserve)
-          y = await self.call(x, ctx)
-          async with Transaction(Qin, Qout, autocommit=True):
-            await Qout.push(k, y)
-            await Qin.pop(k)
+          ctx.log(f'Processing "{k}" with input {x["value"]}', level='DEBUG')
+          try:
+            y = await self.call(x['value'], ctx)
+            Qout = ctx.backend.queue_at(x['url'], self.Tout)
+            async with Transaction(Qin, Qout, autocommit=True):
+              await Qout.push(k, y)
+              await Qin.pop(k)
+
+          except Exception as e:
+            ctx.log(f'Error processing "{k}": {e}. Value: {x["value"]}', level='ERROR')
 
         except Exception as e:
-          ctx.log(f'Error: {e}', level='ERROR')
+          ctx.log(f'Error reading from input queue: {e}', level='ERROR')
+      
+    def runner():
+      asyncio.run(loop())
 
-    return { self.name: lambda: Process(target=runner, args=(Qin, Qout)) }
+    return Process(target=runner)
 
 def activity(
-  name: str | None = None, *,
+  id: str | None = None, *,
   reserve: timedelta | None = timedelta(minutes=2),
 ):
   def decorator(fn: Func1or2[A, Ctx, Awaitable[B]]) -> Activity[A, B, Ctx]:
@@ -54,7 +58,7 @@ def activity(
       raise TypeError(f'Activity {fn.__name__} must have a type hint for its return value')
 
     return Activity(
-      Tin=Tin or param_type(fn), Tout=Tout or return_type(fn), reserve=reserve, name=name or fn.__name__,
+      Tin=Tin or param_type(fn), Tout=Tout or return_type(fn), reserve=reserve, id=id or fn.__name__,
       call=fn if num_params(fn) == 2 else (lambda x, _: fn(x)) # type: ignore
     )
       

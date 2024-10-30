@@ -6,7 +6,7 @@ try:
   import httpx
 except ImportError:
   raise ImportError('Please install `httpx` to use HTTP Queue clients')
-from pipeteer.queues import ReadQueue, WriteQueue, QueueError, InfraError, Transactional
+from pipeteer.queues import Queue, ReadQueue, WriteQueue, QueueError, InfraError, Transactional
 
 T = TypeVar('T')
 U = TypeVar('U')
@@ -72,7 +72,7 @@ class WriteClient(ClientMixin[T], WriteQueue[T], Generic[T]):
         try:
           raise err_adapter.validate_json(r.content)
         except ValidationError:
-          raise QueueError(f'Error pushing to {self.url}: {r.content}')
+          raise QueueError(f'Error pushing to {self.url}: {r.content}. Key: {key}, Value: {value}')
         
     return await self.with_client(_push)
     
@@ -158,7 +158,7 @@ class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
     return super().items(reserve=reserve, max=max)
     
 
-class QueueClient(WriteClient[T], ReadClient[T], Generic[T]):
+class QueueClient(Queue[T], WriteClient[T], ReadClient[T], Generic[T]):
   def __init__(self, url: str, type: 'type[T]'):
     ReadClient.__init__(self, url, type)
     WriteClient.__init__(self, url, type)

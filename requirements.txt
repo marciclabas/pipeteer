@@ -1,7 +1,0 @@
-build
-twine
-ipykernel
-verify-import
-pyright
-mkdocs-material
--e pipeteer

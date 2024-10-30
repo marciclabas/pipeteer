@@ -1,19 +1,19 @@
 from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol, overload, Union
 from dataclasses import dataclass
-from datetime import timedelta
+import asyncio
 from multiprocessing import Process
-from haskellian import Tree, promise as P
-from pipeteer.pipelines import Pipeline, Inputtable, Context, Runnable
-from pipeteer.queues import Queue, ReadQueue, WriteQueue, ListQueue, ops
-from pipeteer.util import param_type, return_type
+import traceback
+from pydantic import TypeAdapter
+from pipeteer.pipelines import Pipeline, Inputtable, Context
+from pipeteer.queues import Queue, Transaction, Routed
+from pipeteer.util import param_type, return_type, race
 
 Aw = Awaitable
 A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
 D = TypeVar('D')
-Ctx = TypeVar('Ctx', bound=Context)
-Artifact = TypeVar('Artifact')
+AnyT: type = Any # type: ignore
 
 class Stop(Exception):
   ...
@@ -21,7 +21,6 @@ class Stop(Exception):
 class WorkflowContext(Protocol):
   async def call(self, pipe: Inputtable[A, B, Any], x: A, /) -> B:
     ...
-
   @overload
   async def all(self, a: Aw[A], b: Aw[B], /) -> tuple[A, B]: ...
   @overload
@@ -32,20 +31,22 @@ class WorkflowContext(Protocol):
   async def all(self, *coros: Aw[A]) -> tuple[A, ...]: ...
 
 @dataclass
-class WkfContext(WorkflowContext, Generic[Ctx]):
-  ctx: Ctx
-  prefix: tuple[str, ...]
+class WkfContext(WorkflowContext):
+  ctx: Context
   states: list
   key: str
+  callback_url: str
   step: int = 0
 
-  async def call(self, pipe: Inputtable[A, B, Ctx], x: A, /) -> B:
+  async def call(self, pipe: Inputtable[A, B, Context], x: A, /) -> B:
     self.step += 1
     if self.step < len(self.states):
-      return self.states[self.step]
+      val = self.states[self.step]
+      return TypeAdapter(pipe.Tout).validate_python(val)
     else:
-      Qin = pipe.input(self.ctx, prefix=self.prefix)
-      await Qin.push(f'{self.step}_{self.key}', x)
+      Qin = pipe.input(self.ctx)
+      self.ctx.log(f'Calling {pipe.id}({x}), step={self.step}, key="{self.key}"', level='DEBUG')
+      await Qin.push(f'{self.step}_{self.key}', { 'url': self.callback_url, 'value': x })
       raise Stop()
     
   async def all(self, *coros: Awaitable):
@@ -61,100 +62,109 @@ class WkfContext(WorkflowContext, Generic[Ctx]):
           await coro
         except Stop:
           ...
-    
     raise Stop()
-
+  
 @dataclass
-class Workflow(Pipeline[A, B, Ctx, Artifact | Callable[[], Process]], Generic[A, B, Ctx, Artifact]):
-  pipelines: list[Runnable]
+class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
   call: Callable[[A, WorkflowContext], Awaitable[B]]
 
-  def states(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue[tuple]:
-    """Actual data store"""
-    type = Union[self.Tin, *(pipe.Tout for pipe in self.pipelines)] # type: ignore
-    return ctx.backend.list_queue(prefix + (self.name, '_states'), tuple[int, type])
-  
-  def tasks(self, ctx: Ctx, prefix: tuple[str, ...]) -> ListQueue[str]:
-    """Queue to keep track of tasks"""
-    return ctx.backend.list_queue(prefix + (self.name, '_tasks'), str)
-  
-  def input(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> WriteQueue[A]:
-    """Input view, creating a singleton state. For inputting new tasks."""
-    return ops.tee(
-      ops.singleton(self.states(ctx, prefix)).premap(lambda x: (0, x)),
-      ops.appender(self.tasks(ctx, prefix)).premap(lambda _: ''),
-      ordered=True
-    )
-  
-  def collector(self, ctx: Ctx, *, prefix: tuple[str, ...] = ()) -> WriteQueue:
-    """Collector view, appending a state. For subpipelines."""
-    def indexed(k: str, v: C) -> tuple[str, tuple[int, C]]:
-      i, key = k.split('_', 1)
-      return key, (int(i), v)
-    return ops.tee(
-      ops.appender(self.states(ctx, prefix)).premap_kv(indexed),
-      ops.appender(self.tasks(ctx, prefix)).premap(lambda _: '').premap_k(lambda k: k.split('_', 1)[1]),
-      ordered=True
-    )
 
+  def states(self, ctx: Context):
+    return ctx.backend.list_queue(self.id + '-states', tuple[int, Any])
 
-  def run(self, Qout: WriteQueue[B], ctx: Ctx, *, prefix: tuple[str, ...] = ()):
+  def urls(self, ctx: Context):
+    return ctx.backend.queue(self.id + '-urls', str)
+  
+  def input(self, ctx: Context) -> Queue[Routed[A]]:
+    return ctx.backend.queue(self.id, Routed[self.Tin])
+
+  def run(self, ctx: Context):
+      
+    ctx.backend.public_queue(self.id + '-results', AnyT) # trigger creation
     
-    Qstates = self.states(ctx, prefix=prefix)
-    Qin = self.tasks(ctx, prefix=prefix)
-    Qresults = self.collector(ctx, prefix=prefix)
+    async def loop():
+      callback_url, Qresults = ctx.backend.public_queue(self.id + '-results', AnyT)
+      Qin = self.input(ctx)
+      Qstates = self.states(ctx)
+      Qurls = self.urls(ctx)
 
-    @P.run
-    async def runner(Qin: ReadQueue[list[A]], Qout: WriteQueue[B], Qstates: ListQueue[tuple[int, Any]], ctx: Ctx, prefix: tuple[str, ...]):
-      ctx = ctx.prefix(prefix + (self.name,))
+      async def run(key: str, states: list):
+        wkf_ctx = WkfContext(ctx, states=states, key=key, callback_url=callback_url)
+        ctx.log(f'Rerunning: key="{key}", states={states}', level='DEBUG')
+        out = await self.call(states[0], wkf_ctx)
+        ctx.log(f'Outputting: key="{key}", value={out}', level='DEBUG')
+        out_url = await Qurls.read(key)
+        Qout = ctx.backend.queue_at(out_url, self.Tout)
+        
+        async with Transaction(Qout, Qurls, Qstates, autocommit=True):
+          await Qout.push(key, out)
+          await Qurls.pop(key)
+          await Qstates.pop(key)
+
+      async def input_step(key, x):
+        value, url = x['value'], x['url']
+        ctx.log(f'Input loop: key="{key}", value={value}', level='DEBUG')
+        try:
+          await run(key, [value])
+        except Stop:
+          async with Transaction(Qin, Qstates, Qurls, autocommit=True):
+            await Qin.pop(key)
+            await Qstates.push(key, [(0, value)])
+            await Qurls.push(key, url)
+
+      async def results_step(idx_key: str, val):
+        i, key = idx_key.split('_', 1)
+        i = int(i)
+        ctx.log(f'Results loop: key="{key}", value={val}, step={i}', level='DEBUG')
+        states = await Qstates.read(key) + [(i, val)]
+        states = [v for _, v in sorted(states)]
+
+        try:
+          await run(key, states)
+          await Qresults.pop(idx_key)
+          
+        except Stop:
+          async with Transaction(Qresults, Qstates, autocommit=True):
+            await Qresults.pop(idx_key)
+            await Qstates.append(key, (i, val))
+
+        # has = await Qresults.has(idx_key)
+        # if has:
+        #   ctx.log(f'Results loop: key="{key}", value={val}, step={i}, has more', level='CRITICAL')
+
       while True:
         try:
-          key, _ = await Qin.wait_any()
-          ctx.log('Processing:', key, level='DEBUG')
-          states = await Qstates.read(key)
-          states = [v for _, v in sorted(states)]
-          wkf_ctx = WkfContext(ctx, prefix + (self.name,), states, key)
+          idx, (k, v) = await race([Qin.wait_any(), Qresults.wait_any()])
           try:
-            out = await self.call(states[0], wkf_ctx)
-            await Qstates.pop(key)
-            await Qout.push(key, out)
+            fn = input_step if idx == 0 else results_step
+            await fn(k, v)
 
-          except Stop:
-            ...
+          except Exception:
+            loop = 'Input' if idx == 0 else 'Results'
+            ctx.log(f'{loop} loop error:', traceback.format_exc(), level='ERROR')
 
-          await Qin.pop(key)
+        except Exception:
+          ctx.log('Error waiting for items:', traceback.format_exc(), level='ERROR')
 
-        except Exception as e:
-          ctx.log('Error', e, level='ERROR')
-
-    procs = dict(_root=lambda: Process(target=runner, args=(Qin, Qout, Qstates, ctx, prefix)))
-    for pipe in self.pipelines:
-      children = pipe.run(Qresults, ctx, prefix=prefix + (self.name,))
-      if not isinstance(children, dict):
-        children = { pipe.name: children }
-      procs |= children # type: ignore
-
-    return { self.name: procs }
+    coro = loop()
+    return Process(target=asyncio.run, args=(coro,))
   
 
 def workflow(
-  pipelines: list[Runnable[Any, Any, Ctx, Artifact]],
-  *, name: str | None = None,
-  Tin: type[A] | None = None, Tout: type[B] | None = None,
+  *, id: str | None = None,
 ):
-  def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B, Ctx, Artifact]:
-    Tin_ = Tin or param_type(fn)
-    if Tin_ is None:
+  def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B]:
+    Tin = param_type(fn)
+    if Tin is None:
       raise TypeError(f'Activity {fn.__name__} must have a type hint for its input parameter')
 
-    Tout_ = Tout or return_type(fn)
-    if Tout_ is None:
+    Tout = return_type(fn)
+    if Tout is None:
       raise TypeError(f'Activity {fn.__name__} must have a type hint for its return value')
     
     return Workflow(
-      Tin=Tin_, Tout=Tout_,
-      name=name or fn.__name__,
-      pipelines=pipelines,
+      Tin=Tin, Tout=Tout,
+      id=id or fn.__name__,
       call=fn, # type: ignore
     ) # type: ignore	
   return decorator

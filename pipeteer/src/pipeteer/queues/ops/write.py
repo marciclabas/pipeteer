@@ -16,7 +16,7 @@ class tee(WriteQueue[A], Generic[A]):
   def __repr__(self) -> str:
     reprs = ', '.join(repr(q) for q in self.queues)
     return f'tee({reprs})'
-
+  
   async def push(self, key: str, value: A):
     if self.ordered:
       for q in self.queues:
