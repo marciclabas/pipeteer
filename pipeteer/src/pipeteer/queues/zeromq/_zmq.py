@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import zmq
 from zmq.asyncio import Context
 from pipeteer.queues import ReadQueue, WriteQueue, Queue, ops
+from pipeteer.util import race, exp_backoff
 
 T = TypeVar('T')
 
@@ -51,7 +52,10 @@ class ReadZQueue(ops.ReadDelegate[T], Generic[T]):
     if (pair := await self.queue.read_any(reserve=reserve)):
       return pair
     while True:
-      key, val = await self.sub.wait()
+      _, (key, val) = await race([
+        self.sub.wait(),
+        exp_backoff(self.queue.read_any, t0=poll_interval.total_seconds(), base=2)
+      ])
       if await self.queue.has(key, reserve=reserve):
         return key, val
       
