@@ -3,6 +3,7 @@ from ._activity import activity, Activity
 from ._task import task, Task
 from ._multitask import multitask, MultiTask
 from ._workflow import workflow, Workflow, WorkflowContext
+from ._client import Client
 # from ._microservice import microservice, Microservice, Client, ClientContext, Routed
 
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
   'task', 'Task',
   'multitask', 'MultiTask',
   'workflow', 'Workflow', 'WorkflowContext',
+  'Client',
   # 'microservice', 'Microservice', 'Client',
   # 'ClientContext', 'Routed',
 ]
