@@ -111,6 +111,11 @@ class WriteQueue(Transactional, Generic[B]):
 class Queue(ReadQueue[C], WriteQueue[C], Generic[C]):
   """A key-value, point-readable queue"""
 
+  @staticmethod
+  def of(url: str, type: type[A]) -> 'Queue[A]':
+    from pipeteer.queues import parse
+    return parse(url, type)
+
   @classmethod
   def sink(cls):
     return Sink()

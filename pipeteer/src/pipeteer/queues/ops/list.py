@@ -8,18 +8,12 @@ A = TypeVar('A')
 class singleton(WriteQueue[A], Generic[A]):
   queue: ListQueue[A]
 
-  def __post_init__(self):
-    self.type = get_args(self.queue.type)[0]
-
   async def push(self, key: str, val: A):
     await self.queue.push(key, [val])
 
 @dataclass
 class appender(WriteQueue[A], Generic[A]):
   queue: ListQueue[A]
-
-  def __post_init__(self):
-    self.type = get_args(self.queue.type)[0]
 
   async def push(self, key: str, val: A):
     await self.queue.append(key, val)

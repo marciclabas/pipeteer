@@ -1,5 +1,6 @@
 from typing_extensions import TypeVar
 from dataclasses import dataclass
+from multiprocessing import Process
 from pipeteer.queues import Queue, ListQueue, ZeroMQueue, SqlQueue, ListSqlQueue
 from pipeteer.backend.sql import SqlBackend
 import asyncio
@@ -18,4 +19,6 @@ class ZmqBackend(SqlBackend):
   
   def run(self):
     from pipeteer.queues.zeromq import proxy
-    asyncio.run(proxy())
+    def _run():
+      asyncio.run(proxy())
+    return Process(target=_run)

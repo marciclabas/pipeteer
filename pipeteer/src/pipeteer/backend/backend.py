@@ -1,7 +1,7 @@
-from typing_extensions import TypeVar, Self
+from typing_extensions import TypeVar
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pipeteer.queues import Queue, ListQueue, WriteQueue
+from pipeteer.queues import Queue, ListQueue
 
 A = TypeVar('A')
 B = TypeVar('B')
@@ -31,9 +31,9 @@ class Backend(ABC):
     from sqlalchemy.ext.asyncio import create_async_engine
     from pipeteer.backend import ZmqBackend
     @dataclass
-    class DefaultSqliteBackend(LocalBackend, ZmqBackend):
+    class DefaultSqlBackend(LocalBackend, ZmqBackend):
       ...
-    return DefaultSqliteBackend(id=url, engine=create_async_engine(url))
+    return DefaultSqlBackend(id=url, engine=create_async_engine(url))
   
   @staticmethod
   def local_sqlite(path: str):
@@ -61,8 +61,8 @@ class LocalBackend(Backend):
     return url, self.queue(id, type)
   
   def queue_at(self, url: str, type: type[A]) -> Queue[A]:
-    if not url.startswith(self.id):
-      raise ValueError(f'Invalid url: {url}. Use another backend for nonlocal access')
-    id = url.removeprefix(f'{self.id}/')
-    return self.queue(id, type)
-  
+    if url.startswith(self.id):
+      id = url.removeprefix(f'{self.id}/')
+      return self.queue(id, type)
+    else:
+      return Queue.of(url, type)

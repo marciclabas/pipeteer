@@ -32,4 +32,6 @@ class HttpBackend(Backend):
     if url in self.urls2id:
       id = self.urls2id[url]
       return self.queue(id, type)
-    return http.QueueClient(url, type)
+    else:
+      return Queue.of(url, type)
+  
