@@ -15,7 +15,7 @@ Use `pipeteer` if you need...
 ## Proof of Concept
 
 ```python
-from pipeteer import activity, workflow, Context, WorkflowContext
+from pipeteer import activity, workflow, WorkflowContext, Context, Backend
 
 @activity()
 async def double(x: int) -> int:
@@ -25,14 +25,25 @@ async def double(x: int) -> int:
 async def inc(x: int) -> int:
   return x + 1
 
-@workflow([double, inc])
+@workflow()
 async def linear(x: int, ctx: WorkflowContext) -> int:
   x2 = await ctx.call(double, x)
   return await ctx.call(inc, x2)
 
 if __name__ == '__main__':
-  ctx = Context.sqlite('workflow.db')
-  linear.run_all(ctx)
+  backend = Backend.local_sqlite('workflow.db')
+  ctx = Context(backend)
+  
+  procs = [
+    double.run(ctx),
+    inc.run(ctx),
+    linear.run(ctx),
+    backend.run(),
+  ]
+  for proc in procs:
+    proc.start()
+  for proc in procs:
+    proc.join()
 ```
 
 Let's see how it all works under the hood, using [queues](queues.md)
