@@ -1,4 +1,4 @@
-from typing_extensions import TypeVar, Generic, Callable, overload, Any, Sequence, Protocol, Union
+from typing_extensions import Mapping, TypeVar, Generic, Callable, overload, Any, Sequence, Protocol, Union
 from dataclasses import dataclass
 from pipeteer.pipelines import Runnable, Context
 

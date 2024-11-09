@@ -68,7 +68,6 @@ class WkfContext(WorkflowContext):
 class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
   call: Callable[[A, WorkflowContext], Awaitable[B]]
 
-
   def states(self, ctx: Context):
     return ctx.backend.list_queue(self.id + '-states', tuple[int, Any])
 
@@ -77,13 +76,24 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
   
   def input(self, ctx: Context) -> Queue[Routed[A]]:
     return ctx.backend.queue(self.id, Routed[self.Tin])
+  
+  def results(self, ctx: Context) -> tuple[str, Queue]:
+    return ctx.backend.public_queue(self.id + '-results', AnyT)
+  
+  def observe(self, ctx: Context):
+    return {
+      'input': self.input(ctx),
+      'states': self.states(ctx),
+      'urls': self.urls(ctx),
+      'results': self.results(ctx),
+    }
 
   def run(self, ctx: Context):
       
-    ctx.backend.public_queue(self.id + '-results', AnyT) # trigger creation
+    self.results(ctx) # trigger creation
     
     async def loop():
-      callback_url, Qresults = ctx.backend.public_queue(self.id + '-results', AnyT)
+      callback_url, Qresults = self.results(ctx)
       Qin = self.input(ctx)
       Qstates = self.states(ctx)
       Qurls = self.urls(ctx)

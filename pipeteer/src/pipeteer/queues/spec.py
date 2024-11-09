@@ -1,6 +1,5 @@
 from typing_extensions import TypeVar, Generic, AsyncIterable, Callable
 from abc import abstractmethod
-from dataclasses import dataclass
 import asyncio
 from datetime import timedelta
 from pipeteer.queues import InexistentItem, Transactional, ops

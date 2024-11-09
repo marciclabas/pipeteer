@@ -67,7 +67,7 @@ class SqlQueue(Queue[T], Generic[T]):
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             await conn.execute(text("PRAGMA busy_timeout=200"))
         self.initialized = True
-      except DatabaseError as e:
+      except DatabaseError:
         ...
 
   def __repr__(self):

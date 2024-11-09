@@ -40,7 +40,7 @@ class Backend(ABC):
     return Backend.local_sql(f'sqlite+aiosqlite:///{path}')
   
   @staticmethod
-  def sql(*, url: str, sql_url: str):
+  def sql(*, url: str, sql_url: str, token: str | None = None):
     from sqlalchemy.ext.asyncio import create_async_engine
     from pipeteer.backend import ZmqBackend, HttpBackend
     @dataclass

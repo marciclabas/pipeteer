@@ -1,9 +1,10 @@
-from typing_extensions import TypeVar, Generic, Self, TypedDict
+from typing_extensions import TypeVar, Generic, Self, Mapping
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace, KW_ONLY
 from dslog import Logger
+from haskellian import Tree
 from pipeteer.backend import Backend
-from pipeteer.queues import WriteQueue, Routed
+from pipeteer.queues import Queue, WriteQueue, Routed
 
 A = TypeVar('A')
 B = TypeVar('B')
@@ -39,5 +40,10 @@ class Runnable(ABC, Generic[A, B, Ctx, Artifact]):
   def run(self, ctx: Ctx, /) -> Artifact:
     ...
 
-class Pipeline(Runnable[A, B, Ctx, Artifact], Inputtable[A, B, Ctx]):
+class Observable(ABC, Generic[Ctx]):
+  @abstractmethod
+  def observe(self, ctx: Ctx) -> Mapping[str, Queue]:
+    ...
+
+class Pipeline(Runnable[A, B, Ctx, Artifact], Inputtable[A, B, Ctx], Observable[Ctx]):
   ...

@@ -8,6 +8,9 @@ T = TypeVar('T')
 class SqlParams(BaseModel):
   table: str
 
+class HttpParams(BaseModel):
+  secret: str | None = None
+
 def parse(url: str, type: type[T]) -> Queue[T]:
 
   parsed_url = urlparse(url) # 'file://path/to/base?prefix=hello'
@@ -19,7 +22,9 @@ def parse(url: str, type: type[T]) -> Queue[T]:
   query = { k: v[0] for k, v in query.items() }
 
   if scheme in ('http', 'https'):
-    return http.QueueClient(url, type)
+    params = HttpParams(**query)
+    url = f'{scheme}://{endpoint}'
+    return http.QueueClient(url, type=type, secret=params.secret)
   
   elif scheme.startswith('sql+'):
     params = SqlParams(**query)

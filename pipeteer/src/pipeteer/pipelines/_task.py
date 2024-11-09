@@ -26,6 +26,9 @@ class Task(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx, Artifact]):
       self.Qin(ctx).premap(lambda x: x['value'])
     )
   
+  def observe(self, ctx: Ctx):
+    return { 'input': self.Qin(ctx), 'urls': self.Qurls(ctx) }
+  
   def run(self, ctx: Ctx, /):
     Qin = self.Qin(ctx)
     Qout = RoutedQueue(self.Qurls(ctx), lambda url: ctx.backend.queue_at(url, self.Tout))
