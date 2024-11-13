@@ -1,16 +1,29 @@
 from pipeteer.queues import Routed, WriteQueue
-from typing_extensions import TypeVar, Generic, Any
+from typing_extensions import TypeVar, Generic
 from dataclasses import dataclass
-from pipeteer import Inputtable, Context
+from pipeteer import Inputtable, Backend
 
 A = TypeVar('A')
 B = TypeVar('B')
 
 @dataclass
-class Client(Inputtable[A, B, Context], Generic[A, B]):
-  url: str | None = None
+class Client(Inputtable[A, B], Generic[A, B]):
+  url: str
+  Tin_: type[A]
+  Tout_: type[B]
+  id_: str
 
-  def input(self, ctx: Context) -> WriteQueue[Routed[A]]:
-    if self.url is None:
-      raise RuntimeError('Client URL is not set')
-    return ctx.backend.queue_at(self.url, Routed[self.Tin])
+  @property
+  def id(self) -> str:
+    return self.id_
+  
+  @property
+  def Tin(self) -> type[A]:
+    return self.Tin_
+  
+  @property
+  def Tout(self) -> type[B]:
+    return self.Tout_
+
+  def input(self, backend: Backend) -> WriteQueue[Routed[A]]:
+    return backend.queue_at(self.url, Routed[self.Tin])

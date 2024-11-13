@@ -1,6 +1,5 @@
 from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol, overload
 from dataclasses import dataclass, field
-from abc import abstractmethod
 import asyncio
 from multiprocessing import Process
 import traceback
@@ -15,16 +14,25 @@ A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
 D = TypeVar('D')
-E = TypeVar('E')
-F = TypeVar('F')
 AnyT: type = Any # type: ignore
 
 class Stop(Exception):
   ...
 
+class WorkflowContext(Protocol):
+  async def call(self, pipe: Inputtable[A, B], x: A, /) -> B:
+    ...
+  @overload
+  async def all(self, a: Aw[A], b: Aw[B], /) -> tuple[A, B]: ...
+  @overload
+  async def all(self, a: Aw[A], b: Aw[B], c: Aw[C], /) -> tuple[A, B, C]: ...
+  @overload
+  async def all(self, a: Aw[A], b: Aw[B], c: Aw[C], d: Aw[D], /) -> tuple[A, B, C, D]: ...
+  @overload
+  async def all(self, *coros: Aw[A]) -> tuple[A, ...]: ...
+
 @dataclass
-class WkfContext:
-  wkf: 'Workflow'
+class WkfContext(WorkflowContext):
   backend: Backend
   log: Logger
   states: list
@@ -32,14 +40,7 @@ class WkfContext:
   callback_url: str
   step: int = 0
 
-  def __getattr__(self, name):
-    attr = getattr(self.wkf, name)
-    if isinstance(attr, Inputtable):
-      return lambda x: self.__call__(attr, x)
-    else:
-      return attr
-
-  async def __call__(self, pipe: Inputtable[A, B], x: A, /) -> B:
+  async def call(self, pipe: Inputtable[A, B], x: A, /) -> B:
     self.step += 1
     if self.step < len(self.states):
       val = self.states[self.step]
@@ -64,44 +65,30 @@ class WkfContext:
         except Stop:
           ...
     raise Stop()
-
+  
 @dataclass(kw_only=True)
-class Workflow(Pipeline[A, B, Process], Generic[A, B]):
+class FnWorkflow(Pipeline[A, B, Process], Generic[A, B]):
+  call: Callable[[A, WorkflowContext], Awaitable[B]]
   id_: str | None = None
   log: Logger = field(default_factory=Logger.click)
 
   @property
-  def id(self):
+  def id(self) -> str:
     return self.id_ or self.__class__.__name__.lower()
-  
+
   @property
   def Tin(self) -> type[A]:
-    Tin = param_type(self.__call__)
+    Tin = param_type(self.call)
     if Tin is None:
-      raise TypeError(f'Activity {self.__call__.__name__} must have a type hint for its input parameter')
+      raise TypeError(f'Activity {self.call.__name__} must have a type hint for its input parameter')
     return Tin
   
   @property
   def Tout(self) -> type[B]:
-    Tout = return_type(self.__call__)
+    Tout = return_type(self.call)
     if Tout is None:
-      raise TypeError(f'Activity {self.__call__.__name__} must have a type hint for its return value')
+      raise TypeError(f'Activity {self.call.__name__} must have a type hint for its return value')
     return Tout
-
-  @abstractmethod
-  async def __call__(self, x: A, /) -> B:
-    ...
-
-  @overload
-  async def all(self, a: Aw[C], b: Aw[D], /) -> tuple[C, D]: ...
-  @overload
-  async def all(self, a: Aw[C], b: Aw[D], c: Aw[E], /) -> tuple[C, D, E]: ...
-  @overload
-  async def all(self, a: Aw[C], b: Aw[D], c: Aw[E], d: Aw[F], /) -> tuple[C, D, E, F]: ...
-  @overload
-  async def all(self, *coros: Aw[C]) -> tuple[C, ...]: ...
-  async def all(self, *coros):
-    return tuple(await asyncio.gather(*coros))
 
   def states(self, backend: Backend):
     return backend.list_queue(self.id + '-states', tuple[int, Any])
@@ -134,9 +121,9 @@ class Workflow(Pipeline[A, B, Process], Generic[A, B]):
       Qurls = self.urls(backend)
 
       async def run(key: str, states: list):
-        wkf_ctx = WkfContext(self, backend, log=self.log, states=states, key=key, callback_url=callback_url)
+        wkf_ctx = WkfContext(backend, log=self.log, states=states, key=key, callback_url=callback_url)
         self.log(f'Rerunning: key="{key}", states={states}', level='DEBUG')
-        out = await self.__class__.__call__(wkf_ctx, states[0]) # type: ignore
+        out = await self.call(states[0], wkf_ctx)
         self.log(f'Outputting: key="{key}", value={out}', level='DEBUG')
         out_url = await Qurls.read(key)
         Qout = backend.queue_at(out_url, self.Tout)
@@ -193,3 +180,11 @@ class Workflow(Pipeline[A, B, Process], Generic[A, B]):
 
     coro = loop()
     return Process(target=asyncio.run, args=(coro,))
+  
+
+def workflow(
+  *, id: str | None = None,
+):
+  def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> FnWorkflow[A, B]:
+    return FnWorkflow(id_=id or fn.__name__, call=fn)
+  return decorator

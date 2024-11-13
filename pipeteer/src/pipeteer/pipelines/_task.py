@@ -1,53 +1,69 @@
 from typing_extensions import TypeVar, Generic, Callable, Any
 from dataclasses import dataclass
-from pipeteer.pipelines import Pipeline, Context
+from abc import abstractmethod
+from pipeteer import Pipeline, Backend
 from pipeteer.queues import Queue, ReadQueue, WriteQueue, Routed, RoutedQueue, ops
 from pipeteer.util import param_type, type_arg, num_params, Func2or3
 
 A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
-Ctx = TypeVar('Ctx', bound=Context)
 Artifact = TypeVar('Artifact')
 
-@dataclass
-class Task(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx, Artifact]):
-  call: Callable[[ReadQueue[A], WriteQueue[B], Ctx], Artifact]
+@dataclass(kw_only=True)
+class Task(Pipeline[A, B, Artifact], Generic[A, B, Artifact]):
+  id_: str | None = None
 
-  def Qurls(self, ctx: Ctx) -> Queue[str]:
-    return ctx.backend.queue(self.id+'-urls', str)
+  @property
+  def id(self) -> str:
+    return self.id_ or self.__class__.__name__.lower()
+
+  @property
+  def Tin(self) -> type[A]:
+    Tin = type_arg(param_type(self.call, 0) or Any) # type: ignore
+    if Tin is None:
+      raise TypeError(f'Task {self.call.__name__} must have a type hint for its input type')
+    return Tin
+    
+  @property
+  def Tout(self) -> type[B]:
+    Tout = type_arg(param_type(self.call, 1) or Any) # type: ignore
+    if Tout is None:
+      raise TypeError(f'Task {self.call.__name__} must have a type hint for its output type')
+    return Tout
   
-  def Qin(self, ctx: Ctx) -> Queue[A]:
-    return ctx.backend.queue(self.id, self.Tin)
+  @abstractmethod
+  def call(self, Qin: ReadQueue[A], Qout: WriteQueue[B], /) -> Artifact:
+    ...
 
-  def input(self, ctx: Ctx) -> WriteQueue[Routed[A]]:
+  def Qurls(self, backend: Backend) -> Queue[str]:
+    return backend.queue(self.id+'-urls', str)
+  
+  def Qin(self, backend: Backend) -> Queue[A]:
+    return backend.queue(self.id, self.Tin)
+
+  def input(self, backend: Backend) -> WriteQueue[Routed[A]]:
     return ops.tee(
-      self.Qurls(ctx).premap(lambda x: x['url']),
-      self.Qin(ctx).premap(lambda x: x['value'])
+      self.Qurls(backend).premap(lambda x: x['url']),
+      self.Qin(backend).premap(lambda x: x['value'])
     )
   
-  def observe(self, ctx: Ctx):
-    return { 'input': self.Qin(ctx), 'urls': self.Qurls(ctx) }
+  def observe(self, backend: Backend):
+    return { 'input': self.Qin(backend), 'urls': self.Qurls(backend) }
   
-  def run(self, ctx: Ctx, /):
-    Qin = self.Qin(ctx)
-    Qout = RoutedQueue(self.Qurls(ctx), lambda url: ctx.backend.queue_at(url, self.Tout))
-    return self.call(Qin, Qout, ctx)
+  def run(self, backend: Backend, /):
+    Qin = self.Qin(backend)
+    Qout = RoutedQueue(self.Qurls(backend), lambda url: backend.queue_at(url, self.Tout))
+    return self.call(Qin, Qout)
+  
+@dataclass
+class FnTask(Task[A, B, Artifact], Generic[A, B, Artifact]):
+  _call: Callable[[ReadQueue[A], WriteQueue[B]], Artifact]
+  def call(self, Qin: ReadQueue[A], Qout: WriteQueue[B]) -> Artifact:
+    return self._call(Qin, Qout)
 
 def task(id: str | None = None):
-  def decorator(fn: Func2or3[ReadQueue[A], WriteQueue[B], Ctx, Artifact]) -> Task[A, B, Ctx, Artifact]:
-    Tin = type_arg(param_type(fn, 0) or Any) # type: ignore
-    if Tin is None:
-      raise TypeError(f'Task {fn.__name__} must have a type hint for its input type')
-    
-    Tout = type_arg(param_type(fn, 1) or Any) # type: ignore
-    if Tout is None:
-      raise TypeError(f'Task {fn.__name__} must have a type hint for its output type')
-    
-    return Task(
-      id=id or fn.__name__,
-      Tin=Tin, Tout=Tout,
-      call=fn if num_params(fn) == 3 else (lambda Qin, Qout, _: fn(Qin, Qout)) # type: ignore
-    )
+  def decorator(fn: Callable[[ReadQueue[A], WriteQueue[B]], Artifact]) -> Task[A, B, Artifact]:
+    return FnTask(id_=id or fn.__name__.lower(), _call=fn)
       
   return decorator

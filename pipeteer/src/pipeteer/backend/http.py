@@ -2,10 +2,9 @@ from typing_extensions import TypeVar, Any
 from dataclasses import dataclass, field
 from fastapi import FastAPI, Request
 from pipeteer.queues import http, Queue
-from pipeteer import Backend, Runnable, Inputtable, Observable, Context
+from pipeteer import Backend, Runnable, Inputtable, Observable
 
 A = TypeVar('A')
-Ctx = TypeVar('Ctx', bound=Context)
 AnyT: type = Any # type: ignore
 
 @dataclass
@@ -49,7 +48,7 @@ class HttpBackend(Backend):
       return Queue.of(url, type)
 
   
-  def mount(self, pipeline: Runnable[Any, Any, Ctx, Any] | Inputtable[Any, Any, Ctx], ctx: Ctx):
+  def mount(self, pipeline: Runnable | Inputtable, backend: Backend):
     
     @self.app.get(f'/pipelines')
     def list_pipelines():
@@ -64,7 +63,7 @@ class HttpBackend(Backend):
     
     if isinstance(pipeline, Observable):
       urls['queues'] = f'{self.url}/pipelines/{pipeline.id}/queues'
-      queues = pipeline.observe(ctx)
+      queues = pipeline.observe(backend)
       for name, queue in queues.items():
         self.app.mount(f'/pipelines/{pipeline.id}/queues/{name}', http.queue_api(queue, AnyT))
 
@@ -77,7 +76,7 @@ class HttpBackend(Backend):
 
     if isinstance(pipeline, Inputtable):
       urls['input'] = f'{self.url}/pipelines/{pipeline.id}/input/write'
-      self.app.mount(f'/pipelines/{pipeline.id}/input/write', http.write_api(pipeline.input(ctx), pipeline.Tin))
+      self.app.mount(f'/pipelines/{pipeline.id}/input/write', http.write_api(pipeline.input(backend), pipeline.Tin))
 
     @self.app.get('/pipelines/{id}')
     def list_pipeline(id: str):

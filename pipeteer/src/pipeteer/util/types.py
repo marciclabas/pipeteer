@@ -1,4 +1,4 @@
-from typing_extensions import TypeVar, Callable, Generic, get_type_hints, get_args
+from typing_extensions import TypeVar, Callable, Any, Generic, get_type_hints, get_args
 import inspect
 from pipeteer.queues import ReadQueue
 
@@ -6,6 +6,7 @@ A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
 D = TypeVar('D')
+S = TypeVar('S')
 
 def param_type(fn: Callable, idx=0) -> type | None:
   sig = inspect.signature(fn)
@@ -25,5 +26,6 @@ def type_arg(generic: type, idx=0) -> type:
 def num_params(fn) -> int:
   return len(inspect.signature(fn).parameters)
 
+FuncOrMethod = Callable[[A], B] | Callable[[S, A], B]
 Func1or2 = Callable[[A, B], C] | Callable[[A], C]
 Func2or3 = Callable[[A, B, C], D] | Callable[[A, B], D]

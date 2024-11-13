@@ -1,13 +1,14 @@
-from .pipeline import Pipeline, Runnable, Inputtable, Context
+from .pipeline import Pipeline, Runnable, Inputtable, Observable
 from ._activity import activity, Activity
 from ._task import task, Task
 from ._multitask import multitask, MultiTask
-from ._workflow import workflow, Workflow, WorkflowContext
+from .fn_workflow import workflow, WorkflowContext
+from ._workflow import Workflow
 from ._client import Client
 # from ._microservice import microservice, Microservice, Client, ClientContext, Routed
 
 __all__ = [
-  'Pipeline', 'Context', 'Runnable', 'Inputtable',
+  'Pipeline', 'Runnable', 'Observable', 'Inputtable',
   'activity', 'Activity',
   'task', 'Task',
   'multitask', 'MultiTask',

@@ -1,26 +1,25 @@
-from typing_extensions import Mapping, TypeVar, Generic, Callable, overload, Any, Sequence, Protocol, Union
+from typing_extensions import TypeVar, Generic, Callable, overload, Any, Sequence, Protocol, Union
 from dataclasses import dataclass
-from pipeteer.pipelines import Runnable, Context
+from pipeteer.pipelines import Runnable
 
 A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
 D = TypeVar('D')
 T = TypeVar('T')
-Ctx = TypeVar('Ctx', bound=Context)
 Artif1 = TypeVar('Artif1')
 Artif2 = TypeVar('Artif2')
 
-class MultiFn(Protocol, Generic[A, Ctx, T]): # type: ignore
-  def __call__(self, *artifs: A, ctx: Ctx) -> T:
+class MultiFn(Protocol, Generic[A, T]): # type: ignore
+  def __call__(self, *artifs: A) -> T:
     ...
 
 @dataclass
-class MultiTask(Runnable[A, B, Ctx, Artif2], Generic[A, B, Ctx, Artif1, Artif2]):
+class MultiTask(Runnable[A, B, Artif2], Generic[A, B, Artif1, Artif2]):
   def __init__(
     self, id: str,
-    pipelines: Sequence[Runnable[A, B, Ctx, Artif1]],
-    merge: MultiFn[Artif1, Ctx, Artif2]
+    pipelines: Sequence[Runnable[A, B, Artif1]],
+    merge: MultiFn[Artif1, Artif2]
   ):
     self.id = id
     self.pipelines = pipelines

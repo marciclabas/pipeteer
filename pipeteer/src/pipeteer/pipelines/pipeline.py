@@ -1,8 +1,5 @@
-from typing_extensions import TypeVar, Generic, Self, Mapping
+from typing_extensions import TypeVar, Generic, Mapping
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, replace, KW_ONLY
-from dslog import Logger
-from haskellian import Tree
 from pipeteer.backend import Backend
 from pipeteer.queues import Queue, WriteQueue, Routed
 
@@ -10,40 +7,39 @@ A = TypeVar('A')
 B = TypeVar('B')
 Artifact = TypeVar('Artifact', covariant=True)
 
-@dataclass
-class Context:
-  backend: Backend
-  _: KW_ONLY
-  log: Logger = field(default_factory=lambda: Logger.click().limit('INFO'))
-
-  def prefix(self, prefix: str) -> Self:
-    return replace(self, log=self.log.prefix(prefix))
-
-Ctx = TypeVar('Ctx', bound=Context)
-
-@dataclass
-class Inputtable(Generic[A, B, Ctx]):
-  Tin: type[A]
-  Tout: type[B]
-  id: str
-
-  def input(self, ctx: Ctx) -> WriteQueue[Routed[A]]:
-    return ctx.backend.queue(self.id, Routed[self.Tin])
-  
-@dataclass
-class Runnable(ABC, Generic[A, B, Ctx, Artifact]):
-  Tin: type[A]
-  Tout: type[B]
-  id: str
-  
+class Base(ABC, Generic[A, B]):
+  @property
   @abstractmethod
-  def run(self, ctx: Ctx, /) -> Artifact:
+  def id(self) -> str:
+    ... 
+
+  @property
+  @abstractmethod
+  def Tin(self) -> type[A]:
     ...
 
-class Observable(ABC, Generic[Ctx]):
+  @property
   @abstractmethod
-  def observe(self, ctx: Ctx) -> Mapping[str, Queue]:
+  def Tout(self) -> type[B]:
     ...
 
-class Pipeline(Runnable[A, B, Ctx, Artifact], Inputtable[A, B, Ctx], Observable[Ctx]):
+  async def __call__(self, x: A) -> B:
+    ...
+
+class Inputtable(Base[A, B], Generic[A, B]):
+  def input(self, backend: Backend) -> WriteQueue[Routed[A]]:
+    return backend.queue(self.id, Routed[self.Tin])
+  
+
+class Runnable(Base[A, B], Generic[A, B, Artifact]):
+  @abstractmethod
+  def run(self, backend: Backend, /) -> Artifact:
+    ...
+
+class Observable(ABC):
+  @abstractmethod
+  def observe(self, backend: Backend) -> Mapping[str, Queue]:
+    ...
+
+class Pipeline(Runnable[A, B, Artifact], Inputtable[A, B], Observable):
   ...
