@@ -1,6 +1,5 @@
 import zmq
 from zmq.asyncio import Context#, Socket
-import asyncio
 
 async def proxy(
   pub_addr: str = 'tcp://*:5555', sub_addr: str = 'tcp://*:5556',

@@ -40,7 +40,7 @@ class Backend(ABC):
     return Backend.local_sql(f'sqlite+aiosqlite:///{path}')
   
   @staticmethod
-  def sql(*, url: str, sql_url: str, token: str | None = None):
+  def sql(*, url: str, sql_url: str, secret: str | None = None):
     from sqlalchemy.ext.asyncio import create_async_engine
     from pipeteer.backend import ZmqBackend, HttpBackend
     @dataclass
@@ -51,6 +51,10 @@ class Backend(ABC):
   @staticmethod
   def sqlite(*, url: str, path: str):
     return Backend.sql(url=url, sql_url=f'sqlite+aiosqlite:///{path}')
+  
+  @staticmethod
+  def client():
+    return ClientBackend()
 
 @dataclass
 class LocalBackend(Backend):
@@ -66,3 +70,16 @@ class LocalBackend(Backend):
       return self.queue(id, type)
     else:
       return Queue.of(url, type)
+    
+class ClientBackend(Backend):
+  def queue(self, id: str, type: type[A]) -> Queue[A]:
+    raise NotImplementedError('ClientBackend can only create remote queues')
+  
+  def public_queue(self, id: str, type: type[A]) -> tuple[str, Queue[A]]:
+    raise NotImplementedError('ClientBackend can only create remote queues')
+  
+  def list_queue(self, id: str, type: type[A]) -> ListQueue[A]:
+    raise NotImplementedError('ClientBackend can only create remote queues')
+  
+  def queue_at(self, url: str, type: type[A]) -> Queue[A]:
+    return Queue.of(url, type)

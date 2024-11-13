@@ -2,9 +2,9 @@ from typing_extensions import TypeVar, Generic, Self, Mapping
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace, KW_ONLY
 from dslog import Logger
-from haskellian import Tree
 from pipeteer.backend import Backend
 from pipeteer.queues import Queue, WriteQueue, Routed
+
 
 A = TypeVar('A')
 B = TypeVar('B')
@@ -45,5 +45,9 @@ class Observable(ABC, Generic[Ctx]):
   def observe(self, ctx: Ctx) -> Mapping[str, Queue]:
     ...
 
-class Pipeline(Runnable[A, B, Ctx, Artifact], Inputtable[A, B, Ctx], Observable[Ctx]):
-  ...
+class Pipeline(Runnable[A, B, Ctx, Artifact], Inputtable[A, B, Ctx], Observable[Ctx], Generic[A, B, Ctx, Artifact]):
+  def as_client(self, url: str) -> 'Pipeline[A, B, Context, Artifact]':
+    """Modify (in-place) the pipeline to act as `Client(url)`"""
+    self.url = url
+    self.input = lambda ctx: ctx.backend.queue_at(self.url, Routed[self.Tin])
+    return self # type: ignore
