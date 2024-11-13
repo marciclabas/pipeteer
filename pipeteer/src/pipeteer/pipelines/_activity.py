@@ -1,4 +1,4 @@
-from typing_extensions import TypeVar, Generic, Callable, Awaitable
+from typing_extensions import Mapping, TypeVar, Generic, Callable, Awaitable
 from dataclasses import dataclass
 import asyncio
 from datetime import timedelta
@@ -18,6 +18,9 @@ class Activity(Pipeline[A, B, Ctx, Process], Generic[A, B, Ctx]):
 
   def input(self, ctx: Ctx) -> Queue[Routed[A]]:
     return ctx.backend.queue(self.id, Routed[self.Tin])
+  
+  def observe(self, ctx: Ctx) -> Mapping[str, Queue]:
+    return { 'input': self.input(ctx) }
 
   def run(self, ctx: Ctx) -> Process:
     async def loop():
