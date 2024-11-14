@@ -15,6 +15,8 @@ class HttpBackend(Backend):
   callback_url: str
   secret: str | None = None
   app: FastAPI = field(default_factory=FastAPI)
+  callbacks_app: FastAPI = field(default_factory=FastAPI)
+  pipelines_app: FastAPI = field(default_factory=FastAPI)
   id2urls: dict[str, str] = field(default_factory=dict)
   urls2id: dict[str, str] = field(default_factory=dict)
   queues: dict[str, Queue] = field(default_factory=dict)
@@ -28,8 +30,10 @@ class HttpBackend(Backend):
       return datetime.now() + self.expires_in
 
   def __post_init__(self):
+    self.app.mount('/pipelines', self.pipelines_app)
+    self.app.mount('/callbacks', self.callbacks_app)
     if self.secret is not None:
-      self.app.middleware('http')(http.token_middleware(self.secret, exclude_paths=['/auth']))
+      self.callbacks_app.middleware('http')(http.token_middleware(self.secret))
 
   @property
   def url(self) -> str:
@@ -45,7 +49,7 @@ class HttpBackend(Backend):
   def public_queue(self, id: str, type: type[A]) -> tuple[str, Queue[A]]:
     queue = self.queue(id, type)
     if not id in self.id2urls:
-      self.app.mount(f'/callbacks/{id}', http.queue_api(queue, type))
+      self.callbacks_app.mount(f'/{id}', http.queue_api(queue, type, secret=self.secret))
       url = f'{self.cb_url}/callbacks/{id}' + self.query()
       self.id2urls[id] = url
       self.urls2id[url] = id
@@ -72,7 +76,7 @@ class HttpBackend(Backend):
           'pipelines': f'{self.url}/pipelines' + self.query(expiry=self.expiry),
         }
 
-    @self.app.get('/pipelines')
+    @self.pipelines_app.get('/')
     def list_pipelines():
       return {
         id: f'{self.url}/pipelines/{id}' + self.query(expiry=self.expiry)
@@ -87,9 +91,9 @@ class HttpBackend(Backend):
       urls['queues'] = f'{self.url}/pipelines/{pipeline.id}/queues' + self.query(expiry=self.expiry)
       queues = pipeline.observe(ctx)
       for name, queue in queues.items():
-        self.app.mount(f'/pipelines/{pipeline.id}/queues/{name}', http.queue_api(queue, AnyT))
+        self.pipelines_app.mount(f'/{pipeline.id}/queues/{name}', http.queue_api(queue, AnyT))
 
-      @self.app.get(f'/pipelines/{pipeline.id}/queues')
+      @self.pipelines_app.get(f'/{pipeline.id}/queues')
       def observe():
         return {
           name: f'{self.url}/pipelines/{pipeline.id}/queues/{name}' + self.query(expiry=self.expiry)
@@ -98,9 +102,9 @@ class HttpBackend(Backend):
 
     if isinstance(pipeline, Inputtable):
       urls['input'] = f'{self.url}/pipelines/{pipeline.id}/input/write' + self.query(expiry=self.expiry)
-      self.app.mount(f'/pipelines/{pipeline.id}/input/write', http.write_api(pipeline.input(ctx), Routed[pipeline.Tin]))
+      self.pipelines_app.mount(f'/{pipeline.id}/input/write', http.write_api(pipeline.input(ctx), Routed[pipeline.Tin]))
 
-    @self.app.get('/pipelines/{id}')
+    @self.pipelines_app.get('/{id}')
     def list_pipeline(id: str):
       return urls
     

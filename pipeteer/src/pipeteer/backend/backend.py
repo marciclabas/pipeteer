@@ -44,7 +44,7 @@ class Backend(ABC):
     db_url = db_url or getenv('DB_URL')
     public_url = public_url or getenv('PUBLIC_URL')
     callback_url = callback_url or getenv('CALLBACK_URL', required=False) or public_url
-    secret = secret or getenv('SECRET')
+    secret = secret or getenv('SECRET', required=False)
     from sqlalchemy.ext.asyncio import create_async_engine
     from pipeteer.backend import ZmqBackend, HttpBackend
     @dataclass
