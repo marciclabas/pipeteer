@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pipeteer"
-version = "0.3.11"
+version = "0.3.14"
 authors = [
   {name="Marcel Claramunt", email="marcel@marcelc.uk"}
 ]

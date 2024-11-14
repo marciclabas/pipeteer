@@ -1,6 +1,7 @@
 from typing_extensions import TypeVar, Generic, Callable, Awaitable, Any, Protocol, overload, Union
 from dataclasses import dataclass
 import asyncio
+from datetime import timedelta
 from multiprocessing import Process
 import traceback
 from pydantic import TypeAdapter
@@ -65,6 +66,7 @@ class WkfContext(WorkflowContext):
 @dataclass
 class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
   call: Callable[[A, WorkflowContext], Awaitable[B]]
+  reserve: timedelta | None = None
 
   def states(self, ctx: Context):
     return ctx.backend.list_queue(self.id + '-states', tuple[int, Any])
@@ -141,19 +143,20 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
         # if has:
         #   ctx.log(f'Results loop: key="{key}", value={val}, step={i}, has more', level='CRITICAL')
 
-      while True:
-        try:
-          idx, (k, v) = await race([Qin.wait_any(), Qresults.wait_any()])
+      sem = asyncio.Semaphore(1)
+      async def _loop(queue: Queue, fn: Callable, name: str):
+        while True:
           try:
-            fn = input_step if idx == 0 else results_step
-            await fn(k, v)
-
+            key, val = await queue.wait_any(reserve=self.reserve)
+            async with sem:
+              await fn(key, val)
           except Exception:
-            loop = 'Input' if idx == 0 else 'Results'
-            ctx.log(f'{loop} loop error:', traceback.format_exc(), level='ERROR')
+            ctx.log(f'Error waiting for items in {name} loop', traceback.format_exc(), level='ERROR')
 
-        except Exception:
-          ctx.log('Error waiting for items:', traceback.format_exc(), level='ERROR')
+      await asyncio.gather(
+        _loop(Qin, input_step, 'input'),
+        _loop(Qresults, results_step, 'results'),
+      )
 
     coro = loop()
     return Process(target=asyncio.run, args=(coro,))
@@ -161,6 +164,7 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
 
 def workflow(
   *, id: str | None = None,
+  reserve: timedelta | None = timedelta(minutes=2),
 ):
   def decorator(fn: Callable[[A, WorkflowContext], Awaitable[B]]) -> Workflow[A, B]:
     Tin = param_type(fn)
@@ -175,5 +179,6 @@ def workflow(
       Tin=Tin, Tout=Tout,
       id=id or fn.__name__,
       call=fn, # type: ignore
+      reserve=reserve,
     ) # type: ignore	
   return decorator
