@@ -52,9 +52,7 @@ class WkfContext(WorkflowContext):
   async def all(self, *coros: Awaitable):
     n = len(coros)
     if self.step + n < len(self.states):
-      prev = self.step+1
-      self.step += n
-      return tuple(self.states[prev:prev+n])
+      return tuple(await asyncio.gather(*coros))
     
     elif self.step+1 == len(self.states):
       for coro in coros:
@@ -101,7 +99,8 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
       async def run(key: str, states: list):
         wkf_ctx = WkfContext(ctx, states=states, key=key, callback_url=callback_url)
         ctx.log(f'Rerunning: key="{key}", states={states}', level='DEBUG')
-        out = await self.call(states[0], wkf_ctx)
+        input = TypeAdapter(self.Tin).validate_python(states[0])
+        out = await self.call(input, wkf_ctx)
         ctx.log(f'Outputting: key="{key}", value={out}', level='DEBUG')
         out_url = await Qurls.read(key)
         Qout = ctx.backend.queue_at(out_url, self.Tout)

@@ -1,10 +1,10 @@
-from .backend import Backend, LocalBackend
+from .backend import Backend
 from .sql import SqlBackend
 from .zmq import ZmqBackend
 from .http import HttpBackend
 
 __all__ = [
-  'Backend', 'LocalBackend',
+  'Backend',
   'SqlBackend', 'ZmqBackend', 'HttpBackend',
   
 ]

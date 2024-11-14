@@ -1,7 +1,7 @@
 from typing_extensions import TypeVar
 from urllib.parse import urlparse, parse_qs, unquote
 from pydantic import BaseModel
-from pipeteer.queues import Queue, http
+from pipeteer import Queue, http
 
 T = TypeVar('T')
 
@@ -10,6 +10,7 @@ class SqlParams(BaseModel):
 
 class HttpParams(BaseModel):
   secret: str | None = None
+  token: str | None = None
 
 def parse(url: str, type: type[T]) -> Queue[T]:
 
@@ -24,7 +25,7 @@ def parse(url: str, type: type[T]) -> Queue[T]:
   if scheme in ('http', 'https'):
     params = HttpParams(**query)
     url = f'{scheme}://{endpoint}'
-    return http.QueueClient(url, type=type, secret=params.secret)
+    return http.QueueClient(url, type=type, secret=params.secret, token=params.token)
   
   elif scheme.startswith('sql+'):
     params = SqlParams(**query)

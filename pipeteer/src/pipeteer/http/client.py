@@ -2,26 +2,23 @@ from datetime import timedelta
 from typing_extensions import AsyncIterable, TypeVar, Generic, ParamSpec, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import jwt
 from pydantic import TypeAdapter, ValidationError
 try:
   import httpx
 except ImportError:
   raise ImportError('Please install `httpx` to use HTTP Queue clients')
 from pipeteer.queues import Queue, ReadQueue, WriteQueue, QueueError, InfraError, Transactional
+from .auth import sign_token
 
 T = TypeVar('T')
 U = TypeVar('U')
 Ps = ParamSpec('Ps')
 
-def sign_token(secret: str, expiry: datetime | None = None) -> str:
-  payload = {} if expiry is None else {'exp': expiry.timestamp()}
-  return jwt.encode(payload, secret, algorithm='HS256')
-
 class ClientMixin(Transactional, Generic[T]):
   def __init__(
     self, url: str, *, type: 'type[T]',
-    headers: dict[str, str] = {}, secret: str | None = None
+    headers: dict[str, str] = {}, secret: str | None = None,
+    token: str | None = None
   ):
     self.url = url
     self.type = type
@@ -29,13 +26,16 @@ class ClientMixin(Transactional, Generic[T]):
     self.client: httpx.AsyncClient | None = None
     self.headers = headers
     self.secret = secret
+    self.token = token
 
   def params(self) -> dict[str, str] | None:
     if self.secret:
       return {'token': sign_token(self.secret, datetime.now() + timedelta(minutes=5))}
+    elif self.token:
+      return {'token': self.token}
   
   async def enter(self, other=None):
-    self.client = httpx.AsyncClient(headers=self.headers)
+    self.client = httpx.AsyncClient(headers=self.headers, params=self.params())
   
   async def close(self, other=None):
     if self.client:
@@ -71,8 +71,8 @@ err_adapter = TypeAdapter(QueueError)
 @dataclass
 class WriteClient(ClientMixin[T], WriteQueue[T], Generic[T]):
 
-  def __init__(self, url: str, type: 'type[T]', headers: dict[str, str] = {}, secret: str | None = None):
-    super().__init__(url, type=type, headers=headers, secret=secret)
+  def __init__(self, url: str, type: 'type[T]', headers: dict[str, str] = {}, secret: str | None = None, token: str | None = None):
+    super().__init__(url, type=type, headers=headers, secret=secret, token=token)
     self.dump = self.adapter.dump_json
 
   async def push(self, key: str, value: T):
@@ -94,8 +94,8 @@ class WriteClient(ClientMixin[T], WriteQueue[T], Generic[T]):
 @dataclass
 class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
 
-  def __init__(self, url: str, *, type: 'type[T]', headers: dict[str, str] = {}, secret: str | None = None):
-    super().__init__(url, type=type, headers=headers, secret=secret)
+  def __init__(self, url: str, *, type: 'type[T]', headers: dict[str, str] = {}, secret: str | None = None, token: str | None = None):
+    super().__init__(url, type=type, headers=headers, secret=secret, token=token)
     self.parse = self.adapter.validate_json
     self.parse_entry = TypeAdapter(tuple[str, self.type]|None).validate_json
   
@@ -174,7 +174,10 @@ class ReadClient(ClientMixin[T], ReadQueue[T], Generic[T]):
     
 
 class QueueClient(Queue[T], WriteClient[T], ReadClient[T], Generic[T]):
-  def __init__(self, url: str, *, type: 'type[T]', headers: dict[str, str] = {}, secret: str | None = None):
+  def __init__(
+    self, url: str, *, type: 'type[T]', headers: dict[str, str] = {},
+    secret: str | None = None, token: str | None = None
+  ):
     ReadClient.__init__(self, url, type=type)
-    WriteClient.__init__(self, url, type, headers=headers, secret=secret)
+    WriteClient.__init__(self, url, type, headers=headers, secret=secret, token=token)
     
