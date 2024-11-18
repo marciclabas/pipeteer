@@ -1,7 +1,7 @@
 from typing_extensions import TypeVar, Any
 from dataclasses import dataclass, field
 from datetime import timedelta, datetime
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from pipeteer.queues import Queue, Routed
 from pipeteer import Backend, Runnable, Inputtable, Observable, Context, http
 
@@ -33,7 +33,7 @@ class HttpBackend(Backend):
     self.app.mount('/pipelines', self.pipelines_app)
     self.app.mount('/callbacks', self.callbacks_app)
     if self.secret is not None:
-      self.callbacks_app.middleware('http')(http.token_middleware(self.secret))
+      self.pipelines_app.middleware('http')(http.token_middleware(self.secret))
 
   @property
   def url(self) -> str:
@@ -75,6 +75,8 @@ class HttpBackend(Backend):
           'token': token,
           'pipelines': f'{self.url}/pipelines' + self.query(expiry=self.expiry),
         }
+      else:
+        return Response(status_code=401, content='Unauthorized')
 
     @self.pipelines_app.get('/')
     def list_pipelines():
@@ -104,7 +106,7 @@ class HttpBackend(Backend):
       urls['input'] = f'{self.url}/pipelines/{pipeline.id}/input/write' + self.query(expiry=self.expiry)
       self.pipelines_app.mount(f'/{pipeline.id}/input/write', http.write_api(pipeline.input(ctx), Routed[pipeline.Tin]))
 
-    @self.pipelines_app.get('/{id}')
-    def list_pipeline(id: str):
+    @self.pipelines_app.get(f'/{pipeline.id}')
+    def list_pipeline():
       return urls
     

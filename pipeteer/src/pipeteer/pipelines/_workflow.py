@@ -16,7 +16,7 @@ C = TypeVar('C')
 D = TypeVar('D')
 AnyT: type = Any # type: ignore
 
-class Stop(Exception):
+class Stop(BaseException):
   ...
 
 class WorkflowContext(Protocol):
@@ -42,26 +42,37 @@ class WkfContext(WorkflowContext):
   async def call(self, pipe: Inputtable[A, B, Context], x: A, /) -> B:
     self.step += 1
     if self.step < len(self.states):
+      self.ctx.log(f'Replaying {pipe.id}, step={self.step}, key="{self.key}"', level='DEBUG')
       val = self.states[self.step]
       return TypeAdapter(pipe.Tout).validate_python(val)
     else:
+      self.ctx.log(f'Calling {pipe.id}, step={self.step}, key="{self.key}"', level='DEBUG')
       Qin = pipe.input(self.ctx)
-      self.ctx.log(f'Calling {pipe.id}({x}), step={self.step}, key="{self.key}"', level='DEBUG')
       await Qin.push(f'{self.step}_{self.key}', { 'url': self.callback_url, 'value': x })
       raise Stop()
     
-  async def all(self, *coros: Awaitable):
+  async def all(self, *coros: Awaitable): # type: ignore
     n = len(coros)
     if self.step + n < len(self.states):
+      self.ctx.log(f'Replaying all, step={self.step}, key="{self.key}"', level='DEBUG')
       return tuple(await asyncio.gather(*coros))
     
     elif self.step+1 == len(self.states):
+      self.ctx.log(f'Calling all, step={self.step}, key="{self.key}"', level='DEBUG')
       for coro in coros:
         try:
           await coro
         except Stop:
           ...
+    else:
+      received = self.step+n+1 - len(self.states)
+      self.ctx.log(f'Ignoring all (received {received}/{n}), step={self.step}, key="{self.key}"', level='DEBUG')
     raise Stop()
+  
+@dataclass
+class State:
+  step: int
+  value: Any
   
 @dataclass
 class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
@@ -85,7 +96,7 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
       'input': self.input(ctx),
       'states': self.states(ctx),
       'urls': self.urls(ctx),
-      'results': self.results(ctx),
+      'results': self.results(ctx)[1],
     }
 
   def run(self, ctx: Context):
@@ -98,25 +109,28 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
       Qstates = self.states(ctx)
       Qurls = self.urls(ctx)
 
-      async def run(key: str, states: list):
+      async def run(key: str, results_key: str | None, states: list):
         wkf_ctx = WkfContext(ctx, states=states, key=key, callback_url=callback_url)
-        ctx.log(f'Rerunning: key="{key}", states={states}', level='DEBUG')
+        ctx.log(f'Rerunning "{key}"', level='DEBUG')
         input = TypeAdapter(self.Tin).validate_python(states[0])
         out = await self.call(input, wkf_ctx)
-        ctx.log(f'Outputting: key="{key}", value={out}', level='DEBUG')
+        
         out_url = await Qurls.read(key)
+        ctx.log(f'Outputting "{key}" to "{out_url}"', level='DEBUG')
         Qout = ctx.backend.queue_at(out_url, self.Tout)
         
-        async with Transaction(Qout, Qurls, Qstates, autocommit=True):
+        async with Transaction(Qout, Qurls, Qstates, Qresults, autocommit=True):
           await Qout.push(key, out)
           await Qurls.pop(key)
           await Qstates.pop(key)
+          if results_key is not None:
+            await Qresults.pop(results_key)
 
       async def input_step(key, x):
         value, url = x['value'], x['url']
-        ctx.log(f'Input loop: key="{key}", value={value}', level='DEBUG')
+        ctx.log(f'Input loop: "{key}"', level='DEBUG')
         try:
-          await run(key, [value])
+          await run(key, None, [value])
         except Stop:
           async with Transaction(Qin, Qstates, Qurls, autocommit=True):
             await Qin.pop(key)
@@ -126,13 +140,12 @@ class Workflow(Pipeline[A, B, Context, Process], Generic[A, B]):
       async def results_step(idx_key: str, val):
         i, key = idx_key.split('_', 1)
         i = int(i)
-        ctx.log(f'Results loop: key="{key}", value={val}, step={i}', level='DEBUG')
+        ctx.log(f'Results loop: "{key}", step={i}', level='DEBUG')
         states = await Qstates.read(key) + [(i, val)]
         states = [v for _, v in sorted(states)]
 
         try:
-          await run(key, states)
-          await Qresults.pop(idx_key)
+          await run(key, idx_key, states)
           
         except Stop:
           async with Transaction(Qresults, Qstates, autocommit=True):

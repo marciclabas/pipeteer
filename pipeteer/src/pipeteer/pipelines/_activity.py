@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import asyncio
 from datetime import timedelta
 from multiprocessing import Process
+import traceback
 from pipeteer.pipelines import Pipeline, Context
 from pipeteer.queues import Queue, Transaction, Routed
 from pipeteer.util import param_type, return_type, num_params, Func1or2
@@ -28,7 +29,7 @@ class Activity(Pipeline[A, B, Ctx, Process], Generic[A, B, Ctx]):
       while True:
         try:
           k, x = await Qin.wait_any(reserve=self.reserve)
-          ctx.log(f'Processing "{k}" with input {x["value"]}', level='DEBUG')
+          ctx.log(f'Processing "{k}"', level='DEBUG')
           try:
             y = await self.call(x['value'], ctx)
             Qout = ctx.backend.queue_at(x['url'], self.Tout)
@@ -36,11 +37,11 @@ class Activity(Pipeline[A, B, Ctx, Process], Generic[A, B, Ctx]):
               await Qout.push(k, y)
               await Qin.pop(k)
 
-          except Exception as e:
-            ctx.log(f'Error processing "{k}": {e}. Value: {x["value"]}', level='ERROR')
+          except Exception:
+            ctx.log(f'Error processing "{k}": {traceback.format_exc()}. Value: {x["value"]}', level='ERROR')
 
-        except Exception as e:
-          ctx.log(f'Error reading from input queue: {e}', level='ERROR')
+        except Exception:
+          ctx.log(f'Error reading from input queue: {traceback.format_exc()}', level='ERROR')
       
     def runner():
       asyncio.run(loop())

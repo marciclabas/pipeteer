@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql.expression import func
+from sqlalchemy.pool import NullPool
 from sqltypes import ValidatedJSON
 from sqlmodel import select, text, or_
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -36,7 +37,7 @@ class SqlQueue(Queue[T], Generic[T]):
 
   @staticmethod
   def new(type: type[U], url: str, *, table: str, echo: bool = False) -> 'SqlQueue[U]':
-    engine = create_async_engine(url, echo=echo)
+    engine = create_async_engine(url, echo=echo, poolclass=NullPool,)
     return SqlQueue(type, engine, table=table)
 
   def __init__(self, type: type[T], engine: AsyncEngine, *, table: str):
@@ -63,9 +64,9 @@ class SqlQueue(Queue[T], Generic[T]):
       try:
         async with self.engine.begin() as conn:
           await conn.run_sync(self.metadata.create_all)
-          if self.engine.dialect.name == 'sqlite':
-            await conn.execute(text("PRAGMA journal_mode=WAL"))
-            await conn.execute(text("PRAGMA busy_timeout=200"))
+          # if self.engine.dialect.name == 'sqlite':
+          #   await conn.execute(text("PRAGMA journal_mode=WAL"))
+          #   await conn.execute(text("PRAGMA busy_timeout=200"))
         self.initialized = True
       except DatabaseError:
         ...
@@ -77,7 +78,7 @@ class SqlQueue(Queue[T], Generic[T]):
     """Generates a session on-the-fly if executing without a transaction"""
     try:
       await self.initialize()
-      if self.session is None:
+      if self.session is None or not self.session.is_active:
         async with AsyncSession(self.engine) as s:
           return await f(s)
       else:

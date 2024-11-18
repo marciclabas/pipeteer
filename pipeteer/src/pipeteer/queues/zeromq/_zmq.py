@@ -47,18 +47,23 @@ class ReadZQueue(ops.ReadDelegate[T], Generic[T]):
   @classmethod
   def of(cls, queue: ReadQueue[T], topic: str, type: type[T], *, url: str = 'tcp://localhost:5556'):
     return cls(queue, SubZMQ(topic, type, url))
+  
+  async def wait_pub(self, reserve: timedelta | None = None):
+    while True:
+      key, val = await self.sub.wait()
+      if await self.queue.has(key, reserve=reserve):
+        return key, val
 
   async def wait_any(self, *, reserve: timedelta | None = None, poll_interval: timedelta = timedelta(seconds=1)):
     if (pair := await self.queue.read_any(reserve=reserve)):
       return pair
-    while True:
-      _, (key, val) = await race([
-        self.sub.wait(),
-        exp_backoff(self.queue.read_any, t0=poll_interval.total_seconds(), base=2)
-      ])
-      if await self.queue.has(key, reserve=reserve):
-        return key, val
-      
+    t0 = poll_interval.total_seconds()
+    
+    _, (key, val) = await race([
+      self.wait_pub(reserve),
+      exp_backoff(self.queue.read_any, t0=t0, base=2, tmax=5*60*t0)
+    ])
+    return key, val
 
 
 @dataclass

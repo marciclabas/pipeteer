@@ -14,7 +14,7 @@ Artifact = TypeVar('Artifact', covariant=True)
 class Context:
   backend: Backend
   _: KW_ONLY
-  log: Logger = field(default_factory=lambda: Logger.click().limit('INFO'))
+  log: Logger = field(default_factory=Logger.click)
 
   def prefix(self, prefix: str) -> Self:
     return replace(self, log=self.log.prefix(prefix))

@@ -50,11 +50,18 @@ class Transaction:
     await asyncio.gather(*[agent.commit(self.agent) for agent in self.agents])
     await self.agent.commit()
 
+  async def rollback(self):
+    await asyncio.gather(*[agent.rollback(self.agent) for agent in self.agents])
+    await self.agent.rollback()
+
   async def close(self):
     await asyncio.gather(*[agent.close(self.agent) for agent in self.agents])
     await self.agent.close()
 
   async def __aexit__(self, exc_type, exc_value, traceback):
-    if exc_type is None and self.autocommit:
-      await self.commit()
+    if exc_type is None:
+      if self.autocommit:
+        await self.commit()
+    else:
+      await self.rollback()
     await self.close()

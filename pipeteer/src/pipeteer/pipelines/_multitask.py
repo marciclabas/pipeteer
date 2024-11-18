@@ -46,7 +46,7 @@ def multitask( # type: ignore
   p1: Runnable[Any, Any, Any, A],
   p2: Runnable[Any, Any, Any, B], /, *,
   id: str | None = None,
-) -> Callable[[MultiFn2[A, B, Ctx, T]], Runnable[Any, Any, Ctx, T]]:
+) -> Callable[[MultiFn2[A, B, Ctx, T]], MultiTask[Any, Any, Ctx, Any, T]]:
   ...
 @overload
 def multitask(
@@ -54,7 +54,7 @@ def multitask(
   p2: Runnable[Any, Any, Any, B],
   p3: Runnable[Any, Any, Any, C], /, *,
   id: str | None = None,
-) -> Callable[[MultiFn3[A, B, C, Ctx, T]], Runnable[Any, Any, Ctx, T]]:
+) -> Callable[[MultiFn3[A, B, C, Ctx, T]], MultiTask[Any, Any, Ctx, Any, T]]:
   ...
 @overload
 def multitask(
@@ -63,10 +63,10 @@ def multitask(
   p3: Runnable[Any, Any, Any, C],
   p4: Runnable[Any, Any, Any, D], /, *,
   id: str | None = None,
-) -> Callable[[MultiFn4[A, B, C, D, Ctx, T]], Runnable[Any, Any, Ctx, T]]:
+) -> Callable[[MultiFn4[A, B, C, D, Ctx, T]], MultiTask[Any, Any, Ctx, Any, T]]:
   ...
 @overload
-def multitask(*pipelines: Runnable[Any, Any, Any, T], id: str | None = None) -> Callable[[MultiFn[Any, Ctx, T]], Runnable[Any, Any, Ctx, T]]:
+def multitask(*pipelines: Runnable[Any, Any, Any, T], id: str | None = None) -> Callable[[MultiFn[Any, Ctx, T]], MultiTask[Any, Any, Ctx, Any, T]]:
   ...
 
 def multitask(*pipelines: Runnable[Any, Any, Any, T], id: str | None = None): # type: ignore

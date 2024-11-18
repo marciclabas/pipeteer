@@ -41,6 +41,17 @@ class ReadDelegate(ReadQueue[T], Generic[T]):
   def clear(self):
     return self.queue.clear()
 
+  def enter(self, other=None):
+    return self.queue.enter(other)
+  
+  def commit(self, other=None):
+    return self.queue.commit(other)
+  
+  def rollback(self, other=None):
+    return self.queue.rollback(other)
+  
+  def close(self, other=None):
+    return self.queue.close(other)
 
 
 @dataclass
@@ -58,6 +69,18 @@ class WriteDelegate(WriteQueue[T], Generic[T]):
   
   def premap_kv(self, mapper):
     return self.queue.premap_kv(mapper)
+  
+  def enter(self, other=None):
+    return self.queue.enter(other)
+  
+  def commit(self, other=None):
+    return self.queue.commit(other)
+  
+  def rollback(self, other=None):
+    return self.queue.rollback(other)
+  
+  def close(self, other=None):
+    return self.queue.close(other)
   
 
 @dataclass
