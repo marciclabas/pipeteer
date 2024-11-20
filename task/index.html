@@ -9,10 +9,8 @@
       
       
       
-        <link rel="prev" href="..">
+        <link rel="prev" href="../workflow/">
       
-      
-        <link rel="next" href="../pipelines/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -20,7 +18,7 @@
     
     
       
-        <title>Queues - Pipeteer</title>
+        <title>Task - Pipeteer</title>
       
     
     
@@ -62,7 +60,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#queues" class="md-skip">
+        <a href="#task" class="md-skip">
           Skip to content
         </a>
       
@@ -98,7 +96,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Queues
+              Task
             
           </span>
         </div>
@@ -232,6 +230,46 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../activity/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Activity
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../workflow/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Workflow
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -248,7 +286,7 @@
           
   
   <span class="md-ellipsis">
-    Queues
+    Task
   </span>
   
 
@@ -259,7 +297,7 @@
         
   
   <span class="md-ellipsis">
-    Queues
+    Task
   </span>
   
 
@@ -281,18 +319,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#operations" class="md-nav__link">
+  <a href="#example-manual-approval" class="md-nav__link">
     <span class="md-ellipsis">
-      Operations
+      Example: Manual Approval
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#views" class="md-nav__link">
+  <a href="#running" class="md-nav__link">
     <span class="md-ellipsis">
-      Views
+      Running
     </span>
   </a>
   
@@ -302,46 +340,6 @@
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../pipelines/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Pipelines
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../transactions/" class="md-nav__link">
-        
-  
-  <span class="md-ellipsis">
-    Transactions
-  </span>
-  
-
-      </a>
     </li>
   
 
@@ -373,18 +371,18 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#operations" class="md-nav__link">
+  <a href="#example-manual-approval" class="md-nav__link">
     <span class="md-ellipsis">
-      Operations
+      Example: Manual Approval
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#views" class="md-nav__link">
+  <a href="#running" class="md-nav__link">
     <span class="md-ellipsis">
-      Views
+      Running
     </span>
   </a>
   
@@ -408,26 +406,59 @@
   
 
 
-<h1 id="queues">Queues</h1>
-<p>Queues are how <code>pipeteer</code>'s pipelines communicate. A <code>Queue[T]</code> is an <strong>transactional, async key-value store</strong>.</p>
-<h2 id="operations">Operations</h2>
-<p>Queues support the following operations:</p>
-<ul>
-<li><code>async def push(key: str, value: T)</code></li>
-<li><code>async def pop(key: str) -&gt; T</code></li>
-<li><code>async def read(key: str) -&gt; T</code></li>
-<li><code>async def read_any() -&gt; tuple[str, T]</code></li>
-<li><code>def items() -&gt; AsyncIterable[tuple[str, T]]</code></li>
-<li>(and a few more)</li>
-</ul>
-<h2 id="views">Views</h2>
-<p>Queues can have two separate views:</p>
-<ul>
-<li><code>ReadQueue[T]</code>: can be read and popped from, but not pushed to.</li>
-<li><code>WriteQueue[T]</code>: can be pushed to, but not read or popped from.</li>
-</ul>
-<p>In general, <strong><code>Queue</code>s are stored somewhere in disk or memory</strong>, whilst <em>views may be transformations of the underlying <code>Queue</code>.</em></p>
-<p>Let's see how these are used by <a href="../pipelines/">pipelines</a>!</p>
+<h1 id="task">Task</h1>
+<p>A <code>task</code> is the go-to way to define a completely arbitrary pipeline. You've got access to the underlying table with the tasks.</p>
+<p>The most common use case is to expose an API for users to manipulate tasks:</p>
+<h2 id="example-manual-approval">Example: Manual Approval</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">fastapi</span> <span class="kn">import</span> <span class="n">FastAPI</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span> <span class="nn">sqlmodel</span> <span class="kn">import</span> <span class="n">select</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span> <span class="nn">pipeteer</span> <span class="kn">import</span> <span class="n">task</span><span class="p">,</span> <span class="n">workflow</span><span class="p">,</span> <span class="n">InputT</span><span class="p">,</span> <span class="n">Push</span><span class="p">,</span> <span class="n">Context</span><span class="p">,</span> <span class="n">WorkflowContext</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nd">@task</span><span class="p">()</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">approve</span><span class="p">(</span><span class="n">Inp</span><span class="p">:</span> <span class="n">InputT</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">push</span><span class="p">:</span> <span class="n">Push</span><span class="p">[</span><span class="nb">bool</span><span class="p">],</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">Context</span><span class="p">):</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  <span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  <span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;/tasks&#39;</span><span class="p">)</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  <span class="k">def</span> <span class="nf">get_tasks</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]:</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">session</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>      <span class="n">tasks</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">exec</span><span class="p">(</span><span class="n">select</span><span class="p">(</span><span class="n">Inp</span><span class="p">))</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>      <span class="k">return</span> <span class="p">[(</span><span class="n">task</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">]</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>  <span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;/approve/</span><span class="si">{key}</span><span class="s1">&#39;</span><span class="p">)</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>  <span class="k">async</span> <span class="k">def</span> <span class="nf">approve</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="k">await</span> <span class="n">push</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>  <span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;/reject/</span><span class="si">{key}</span><span class="s1">&#39;</span><span class="p">)</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>  <span class="k">async</span> <span class="k">def</span> <span class="nf">reject</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    <span class="k">await</span> <span class="n">push</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>  <span class="k">return</span> <span class="n">app</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a><span class="nd">@workflow</span><span class="p">()</span>
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">wkf</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">WorkflowContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>  <span class="n">ok</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">call</span><span class="p">(</span><span class="n">approve</span><span class="p">,</span> <span class="n">task</span><span class="p">)</span>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>  <span class="k">return</span> <span class="n">ok</span>
+</code></pre></div>
+<h2 id="running">Running</h2>
+<p>How to run it? Completely up to you. For instance:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span> <span class="nn">multiprocessing</span> <span class="kn">import</span> <span class="n">Process</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">import</span> <span class="nn">uvicorn</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="kn">from</span> <span class="nn">pipeteer</span> <span class="kn">import</span> <span class="n">DB</span><span class="p">,</span> <span class="n">Context</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">db</span> <span class="o">=</span> <span class="n">DB</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s1">&#39;pipe.db&#39;</span><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">ctx</span> <span class="o">=</span> <span class="n">Context</span><span class="o">.</span><span class="n">of</span><span class="p">(</span><span class="n">db</span><span class="p">)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">procs</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>  <span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">uvicorn</span><span class="o">.</span><span class="n">run</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">approve</span><span class="p">,</span><span class="n">run</span><span class="p">(</span><span class="n">ctx</span><span class="p">)]),</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>  <span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">wkf</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">ctx</span><span class="p">)]),</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">]</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">procs</span><span class="p">:</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>  <span class="n">proc</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">procs</span><span class="p">:</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>  <span class="n">proc</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</code></pre></div>
 
 
 
