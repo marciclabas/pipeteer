@@ -9,7 +9,6 @@ help:
 build:
   cd {{PKG}} && \
   rm -drf dist && \
-  cp ../README.md . && \
   pyright . && \
   {{PYTHON}} -m build && \
   rm -drf build
@@ -17,6 +16,7 @@ build:
 # Publish `dist/*` to pypi, then delete
 publish: build
   cd {{PKG}} && \
+  cp ../README.md . && \
   {{PYTHON}} -m twine upload dist/* && \
   rm -drf dist
 

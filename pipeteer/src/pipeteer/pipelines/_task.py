@@ -1,42 +1,45 @@
-from typing_extensions import TypeVar, Generic, Callable, Any
+from typing_extensions import TypeVar, Generic, Callable, Any, Awaitable, Protocol
 from dataclasses import dataclass
-from pipeteer.pipelines import Pipeline, Context
-from pipeteer.queues import Queue, ReadQueue, WriteQueue, Routed, RoutedQueue, ops
+from sqlmodel import Session
+from pipeteer.pipelines import Pipeline, Context, Entry, InputT
 from pipeteer.util import param_type, type_arg, num_params, Func2or3
 
 A = TypeVar('A')
 B = TypeVar('B')
 C = TypeVar('C')
+D = TypeVar('D', contravariant=True)
 Ctx = TypeVar('Ctx', bound=Context)
 Artifact = TypeVar('Artifact')
 
+class Push(Protocol, Generic[D]):
+  async def __call__(self, key: str, val: D) -> bool:
+    ...
+
 @dataclass
 class Task(Pipeline[A, B, Ctx, Artifact], Generic[A, B, Ctx, Artifact]):
-  call: Callable[[ReadQueue[A], WriteQueue[B], Ctx], Artifact]
+  call: Callable[[type[InputT[A]], Push[B], Ctx], Artifact]
 
-  def Qurls(self, ctx: Ctx) -> Queue[str]:
-    return ctx.backend.queue(self.id+'-urls', str)
-  
-  def Qin(self, ctx: Ctx) -> Queue[A]:
-    return ctx.backend.queue(self.id, self.Tin)
-
-  def input(self, ctx: Ctx) -> WriteQueue[Routed[A]]:
-    return ops.tee(
-      self.Qurls(ctx).premap(lambda x: x['url']),
-      self.Qin(ctx).premap(lambda x: x['value'])
-    )
-  
-  def observe(self, ctx: Ctx):
-    return { 'input': self.Qin(ctx), 'urls': self.Qurls(ctx) }
-  
   def run(self, ctx: Ctx, /):
-    Qin = self.Qin(ctx)
-    Qout = RoutedQueue(self.Qurls(ctx), lambda url: ctx.backend.queue_at(url, self.Tout))
-    return self.call(Qin, Qout, ctx)
+    Input = self.input(ctx)
+    async def push(key: str, val: B):
+      with Session(ctx.db.engine) as s:
+        if (inp := s.get(Input, key)) is None:
+          return False
+        else:
+          out = inp.output
+          Output = ctx.db.table(out, Entry(self.Tout))
+          s.add(Output(key=key, value=val))
+          s.delete(inp)
+          s.commit()
+      
+      await ctx.zmq.pub.send(out)
+      return True
+
+    return self.call(Input, push, ctx)
 
 def task(id: str | None = None):
-  def decorator(fn: Func2or3[ReadQueue[A], WriteQueue[B], Ctx, Artifact]) -> Task[A, B, Ctx, Artifact]:
-    Tin = type_arg(param_type(fn, 0) or Any) # type: ignore
+  def decorator(fn: Func2or3[type[InputT[A]], Push[B], Ctx, Artifact]) -> Task[A, B, Ctx, Artifact]:
+    Tin = type_arg(type_arg(param_type(fn, 0) or Any)) # type: ignore
     if Tin is None:
       raise TypeError(f'Task {fn.__name__} must have a type hint for its input type')
     

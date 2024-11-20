@@ -4,6 +4,10 @@
 
 > [**Read the docs**](https://marciclabas.github.io/pipeteer/)
 
+# Welcome to Pipeteer
+
+Pipeteer **simplifies the complexity of durable execution** whilst *not hiding the underlying persistence*.
+
 ## Why Pipeteer?
 
 Use `pipeteer` if you need...
@@ -12,27 +16,74 @@ Use `pipeteer` if you need...
 - **Observability**: you can see the state of your app at any time, and *modify it* programmatically at runtime
 - **Exactly-once semantics**: your app can be stopped and resumed without dropping or duplicating work
 - **Fault tolerance**: if a task fails, it'll keep working on other tasks and retry it later
-- **Explicit data**: `pipeteer`'s high level API is a very thin abstraction over explicit communication using queues
+- **Explicitness**: `pipeteer`'s high level API is a very thin abstraction over SQLModel (for persistance) and ZeroMQ (for inter-process communication)
 
 ## Proof of Concept
 
+**Definition.** You can define a durable workflow this easy:
+
 ```python
-from pipeteer import activity, workflow, Context, WorkflowContext
+from pipeteer import activity, workflow, WorkflowContext
 
 @activity()
 async def double(x: int) -> int:
   return 2*x
 
-@activity()
-async def inc(x: int) -> int:
-  return x + 1
-
-@workflow([double, inc])
-async def linear(x: int, ctx: WorkflowContext) -> int:
+@workflow()
+async def quad(x: int, ctx: WorkflowContext) -> int:
   x2 = await ctx.call(double, x)
-  return await ctx.call(inc, x2)
+  x4 = await ctx.call(double, x2)
+  return x4
+```
 
-if __name__ == '__main__':
-  ctx = Context.sqlite('workflow.db')
-  linear.run_all(ctx)
+**Worker.** And here's how to run it:
+
+```python
+import asyncio
+from pipeteer import DB, Context
+
+db = DB.at('pipeline.db')
+ctx = Context.of(db)
+
+async def main():
+  await asyncio.gather(
+    double.run(ctx),
+    quad.run(ctx),
+    ctx.zmq.proxy(),
+  )
+```
+
+**Input**. How to give it tasks?
+  
+```python
+from pipeteer import DB, Context
+
+db = DB.at('pipeline.db')
+ctx = Context.of(db)
+
+Input = quad.input(ctx)
+with db.session as s:
+  s.add(Input(key='task', value=1, output='my-output'))
+  s.commit()
+
+await quad.notify(ctx)
+```
+
+**Output**. How to get the results?
+
+```python
+from sqlmodel import select
+from pipeteer import DB, Context
+
+db = DB.at('pipeline.db')
+ctx = Context.of(db)
+
+Output = quad.output(ctx, 'my-output')
+while True:
+  with db.session as s:
+    for entry in s.exec(select(Output)):
+      print(f'Output: {entry.key} -> {entry.value}')
+      s.delete(entry)
+    s.commit()
+  await ctx.wait('my-output')
 ```

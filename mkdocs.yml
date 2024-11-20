@@ -8,9 +8,9 @@ theme:
     - content.code.copy
 nav:
   - Home: index.md
-  - Queues: queues.md
-  - Pipelines: pipelines.md
-  - Transactions: transactions.md
+  - Activity: activity.md
+  - Workflow: workflow.md
+  - Task: task.md
 
 markdown_extensions:
   - pymdownx.highlight:

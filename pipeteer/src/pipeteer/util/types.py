@@ -1,6 +1,5 @@
-from typing_extensions import TypeVar, Callable, Generic, get_type_hints, get_args
+from typing_extensions import TypeVar, Callable, get_args
 import inspect
-from pipeteer.queues import ReadQueue
 
 A = TypeVar('A')
 B = TypeVar('B')
@@ -19,8 +18,15 @@ def return_type(fn: Callable) -> type | None:
     return ann
 
 
-def type_arg(generic: type, idx=0) -> type:
-  return get_args(generic)[idx]
+def type_arg(generic: type, idx=0) -> type | None:
+  try:
+    return get_args(generic)[idx]
+  except IndexError:
+    ...
+  try:
+    return generic.__args__[idx]
+  except:
+    ...
 
 def num_params(fn) -> int:
   return len(inspect.signature(fn).parameters)
