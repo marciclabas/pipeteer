@@ -16,6 +16,9 @@ dependencies = [
 requires-python = ">=3.10"
 readme = {file="README.md", content-type="text/markdown"}
 
+[project.optional-dependencies]
+cli = ["typer"]
+
 [project.urls]
 repo = "https://github.com/marciclabas/pipeteer.git"
 docs = "https://marciclabas.github.io/pipeteer/"

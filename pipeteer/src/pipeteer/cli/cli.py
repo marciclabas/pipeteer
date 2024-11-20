@@ -8,10 +8,12 @@ def callback():
 
 @main.command()
 def proxy(
-  pub_addr: str = typer.Option('tcp://*:5555', '-p', '--pub'),
-  sub_addr: str = typer.Option('tcp://*:5556', '-s', '--sub'),
+  pub_url: str = typer.Option('tcp://*:5555', '-p', '--pub'),
+  sub_url: str = typer.Option('tcp://*:5556', '-s', '--sub'),
   verbose: bool = typer.Option(False, '-v', '--verbose')
 ):
   import asyncio
+  from dslog import Logger
   from pipeteer.backend import proxy
-  asyncio.run(proxy(pub_addr=pub_addr, sub_addr=sub_addr, verbose=verbose))
+  log = Logger.click().prefix('[PROXY]') if verbose else Logger.empty()
+  asyncio.run(proxy(pub_url=pub_url, sub_url=sub_url, log=log))
